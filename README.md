@@ -25,7 +25,7 @@ Text-to-SQL demos often give a model excessive authority and trust plausible-loo
 - SQLite URI read-only mode, `query_only`, timeout progress handler, and `EXPLAIN QUERY PLAN`
 - Registered healthcare metrics and fixed statistical tools; arbitrary generated Python never runs
 - Result plausibility checks, deterministic arithmetic, small-cell suppression, grounded answer templates
-- FastAPI/OpenAPI, polished Streamlit UI, JSON audit trail, benchmarks, pytest, Docker Compose, and CI
+- FastAPI/OpenAPI, polished Streamlit UI, JSON audit trail, benchmarks, pytest, Docker Compose, optional Kubernetes deployment, and CI
 - 20 annotated reference queries covering joins, CTEs, subqueries, date logic, views, indexes, and windows
 
 ## What the safety-focused description means in plain English
@@ -530,11 +530,11 @@ flowchart LR
 
 PostgreSQL provides an optional production-style serving path, with separate query and loading boundaries; SQLite remains the default. The same logical batches move through raw, bronze, silver, and gold snapshots using canonical JSON Lines in the Python reference engine or Parquet plus a canonical logical sidecar in the optional Spark engine. Raw preserves the immutable source; bronze adds ingestion metadata; silver applies deterministic typing, cleanup, deduplication, and validation; gold exposes reviewed analytical tables and registered metric materializations.
 
-PySpark runs reviewed transformation code over versioned records when the optional engine is selected. It does not execute arbitrary model-generated Python or Spark expressions. The optional Airflow DAG schedules ingestion, transformations, quality gates, publication, serving-snapshot creation, and verification; it does not handle latency-sensitive `/analyze` requests. Kubernetes remains deferred because deployment orchestration is useful only after service boundaries, external state, health checks, idempotency, resource requirements, and operational ownership are established.
+PySpark runs reviewed transformation code over versioned records when the optional engine is selected. It does not execute arbitrary model-generated Python or Spark expressions. The optional Airflow DAG schedules ingestion, transformations, quality gates, publication, serving-snapshot creation, and verification; it does not handle latency-sensitive `/analyze` requests. Kubernetes now packages these established services with configuration, storage, networking, probes, and resource policies; it does not redefine their work.
 
 #### What this means in plain English
 
-The project has standardized boxes, labels, and inspection rules, then added optional PostgreSQL serving, Spark processing, and Airflow scheduling behind those contracts. Kubernetes remains a future building manager; none of these systems may redefine the data or weaken permission checks.
+The project standardized boxes, labels, and inspection rules, then added optional PostgreSQL serving, Spark processing, Airflow scheduling, and Kubernetes operations behind those contracts. None of these systems may redefine the data or weaken permission checks.
 
 #### What would happen without this layer?
 
@@ -868,11 +868,11 @@ flowchart LR
  BR -. "lineage" .-> RAW
 ```
 
-The optional Spark engine consumes a registered input snapshot and produces a deterministic output snapshot with transformation-version metadata. It does not execute arbitrary AI-generated code. The optional Airflow DAG schedules jobs and records its DAG run ID as orchestration provenance; it does not execute interactive `/analyze`. Kubernetes may eventually deploy services and jobs, but it is unrelated to the meaning of dataset identity or lineage.
+The optional Spark engine consumes a registered input snapshot and produces a deterministic output snapshot with transformation-version metadata. It does not execute arbitrary AI-generated code. The optional Airflow DAG schedules jobs and records its DAG run ID as orchestration provenance; it does not execute interactive `/analyze`. Kubernetes deploys these services and jobs but remains unrelated to the meaning of dataset identity or lineage.
 
 #### What this means in plain English
 
-Spark is the optional factory, Airflow is the optional shift scheduler, PostgreSQL is the optional storefront, and Kubernetes remains a future building manager. The manifest and snapshot records are the inventory ledger shared across the implemented components.
+Spark is the optional factory, Airflow is the optional shift scheduler, PostgreSQL is the optional storefront, and Kubernetes is the building manager. The manifest and snapshot records remain the inventory ledger shared across them.
 
 #### What would happen without this layer?
 
@@ -1094,7 +1094,7 @@ Performance comparisons must use equivalent snapshots, warm/cold cache labels, f
 - PostgreSQL metadata storage, high-availability connections, pooling, TLS policy, credential rotation, and migrations are future production hardening.
 - Dialect-specific reference curriculum queries using `julianday` remain SQLite examples; governed curated queries are portable.
 - Relationship-policy enforcement remains disabled.
-- Spark, Airflow, and PostgreSQL remain optional; Kubernetes, cloud object storage, Delta Lake, and other cluster infrastructure are not implemented.
+- Spark, Airflow, PostgreSQL, and Kubernetes deployment remain optional; cloud object storage, Delta Lake, service mesh, Helm, and cloud-provider infrastructure are not implemented.
 
 ### How PostgreSQL integrates with the data lake and Spark
 
@@ -1111,7 +1111,7 @@ flowchart LR
  SQ --> AN
 ```
 
-Spark optionally transforms registered inputs into registered outputs using deterministic reviewed code. PostgreSQL implements the optional serving boundary; it does not authorize arbitrary model-generated distributed code. Airflow optionally orchestrates these existing contracts, while Kubernetes remains deferred.
+Spark optionally transforms registered inputs into registered outputs using deterministic reviewed code. PostgreSQL implements the optional serving boundary; it does not authorize arbitrary model-generated distributed code. Airflow optionally orchestrates these contracts, while Kubernetes optionally deploys their existing containers and commands.
 
 #### What this means in plain English
 
@@ -1348,7 +1348,7 @@ flowchart RL
  BATCH --> OBJECTS["Immutable source objects and checksums"]
 ```
 
-`LineageResolver` can optionally receive the lake store. It resolves an analysis run to its serving snapshot, reads `gold_snapshot_id`, and traverses deterministic parent links to raw. Transformation name, version, checksums, validation, and source identity are platform metadata—not model prose. Placeholder orchestration and distributed-job IDs remain null.
+`LineageResolver` can optionally receive the lake store. It resolves an analysis run to its serving snapshot, reads `gold_snapshot_id`, and traverses deterministic parent links to raw. Transformation name, version, checksums, validation, source identity, and optional Airflow/Spark run metadata are platform metadata—not model prose. Kubernetes deployment metadata does not alter this lineage.
 
 ### What this means in plain English
 
@@ -1424,13 +1424,13 @@ flowchart TD
 
 Airflow will become the timetable and dispatcher. It will not rewrite the trains or decide whether unsafe cargo passes inspection.
 
-## Why Kubernetes remains last
+## Why Kubernetes was added last
 
-Kubernetes operates multiple mature services. It is useful after storage, processing, scheduling, health, secrets, resources, and ownership boundaries exist.
+Kubernetes operates multiple mature services. It was added only after storage, processing, scheduling, health, secrets, resources, and ownership boundaries existed.
 
 ```mermaid
 flowchart TD
- K["Future Kubernetes cluster"] --> API["Stateless API replicas"]
+ K["Optional Kubernetes cluster"] --> API["API deployment"]
  K --> UI["UI service"]
  K --> AF["Airflow components"]
  K --> SP["Spark operator/workers"]
@@ -1443,7 +1443,7 @@ This is a future topology, not code or deployment added by this release.
 
 ### What this means in plain English
 
-Kubernetes is the building manager. The project first defines the rooms, machines, schedules, and safety procedures that the manager will operate.
+Kubernetes is the building manager. The project defined the rooms, machines, schedules, and safety procedures before giving that manager a deployment plan.
 
 ## Verification, parity, and benchmark results
 
@@ -1484,9 +1484,9 @@ Performance comparisons require equivalent snapshots, cache-state labels, server
 - Silver checks are intentionally focused on this fixture, not a generic enterprise quality framework.
 - Retention and garbage collection are manual.
 - PostgreSQL live results remain blocked until Docker or a DSN is available.
-- Spark and Airflow are optional local integrations. Kubernetes, cloud services, an external object-storage server, distributed table formats, and relationship-policy enforcement are not implemented.
+- Spark, Airflow, and Kubernetes are optional integrations. Cloud services, an external object-storage server, distributed table formats, service mesh, Helm, and relationship-policy enforcement are not implemented.
 
-Production hardening should add an object-store adapter with conditional writes and encryption; identity and access controls; PHI classification; tamper-evident metadata; retention; observability; live PostgreSQL roles/TLS/pooling; distributed Spark hashing and cluster submission; Airflow operational deployment; and disaster recovery. Kubernetes remains last.
+Production hardening should add an object-store adapter with conditional writes and encryption; identity and access controls; PHI classification; tamper-evident metadata; retention; observability; live PostgreSQL roles/TLS/pooling; distributed Spark hashing and cluster submission; multi-node storage validation; and disaster recovery.
 
 ### What this means in plain English
 
@@ -1537,7 +1537,7 @@ timeline
  Local medallion lake : Python raw, bronze, silver, gold
  Current : Optional Spark implementation and parity
  Next : Airflow scheduling
- Later : Kubernetes operations
+ Current : Optional Kubernetes operations
 ```
 
 #### What this means in plain English
@@ -1864,13 +1864,13 @@ flowchart LR
  GO --> PUB["Publish after existing gates"]
 ```
 
-### Why Kubernetes is still deferred
+### Why Kubernetes follows Spark and Airflow
 
-Kubernetes follows Airflow, externalized object storage and metadata, independently deployable services, readiness probes, resource limits, secrets, and tested operational behavior.
+Kubernetes follows Spark and Airflow because it deploys existing services; it does not create their processing or scheduling contracts. This baseline supplies independently deployable workloads, readiness probes, resource limits, template secrets, and generic persistent storage while clearly retaining local-filesystem limitations.
 
 ```mermaid
 flowchart TD
- K["Future Kubernetes"] --> API["Analyst API"]
+ K["Kubernetes"] --> API["Analyst API"]
  K --> AIR["Airflow services"]
  K --> SD["Spark driver pods"]
  SD --> EX["Spark executor pods"]
@@ -1879,7 +1879,7 @@ flowchart TD
  SD --> OBJ["External object storage"]
 ```
 
-The project includes an optional Airflow dependency group and a local-executor-compatible DAG. It does not include Kubernetes manifests, a Spark-on-Kubernetes operator, Celery workers, cloud SDKs, Kafka, MinIO, Delta Lake, Iceberg, or Hudi.
+The project includes an optional Airflow dependency group, a local-executor-compatible DAG, and plain Kubernetes manifests. It does not include a Spark-on-Kubernetes operator, Celery workers, Helm, service mesh, cloud SDKs, Kafka, MinIO, Delta Lake, Iceberg, or Hudi.
 
 ### Current limitations and production-hardening roadmap
 
@@ -1890,7 +1890,7 @@ The project includes an optional Airflow dependency group and a local-executor-c
 - The large profile is optional and not a CI gate.
 - PostgreSQL live publication still requires a server.
 
-Production hardening should add a dedicated supported Airflow runtime, live Spark/PostgreSQL integration gates, distributed logical hashing, object storage with conditional publication, external metadata, encryption and access policy, Spark event/metrics capture, cluster submission, resource testing, and operational recovery. Kubernetes remains after those boundaries exist.
+Production hardening should add a dedicated supported Airflow runtime, live Spark/PostgreSQL integration gates, distributed logical hashing, object storage with conditional publication, external metadata, encryption and access policy, Spark event/metrics capture, cluster submission, multi-node resource testing, and operational recovery.
 
 ## Optional Apache Airflow orchestration
 
@@ -2168,7 +2168,7 @@ The web UI and scheduler are operational tools; the healthcare analyst API does 
 
 The optional Airflow package is not installed in the current Windows runtime, so a real scheduler, metadata migration, webserver, and DAG parse through Airflow itself are not claimed as executed. Runtime-independent tests validate the full runner, task ordering, retry configuration, callbacks, sensor behavior, Python engine, Spark selection, failed-gate preservation, publication, verification, metadata, and analysis lineage. A real DAG-import test is present and skips only when Airflow is absent. The complete available suite reports 166 passed, 17 skipped, and 92.92% coverage.
 
-Docker remains unavailable, so live PostgreSQL publication is also not claimed. The DAG uses only local files and existing optional database configuration. No Celery, Kubernetes, Helm, Terraform, broker, or cloud scheduler was introduced.
+Docker remains unavailable, so live PostgreSQL publication is also not claimed. The DAG uses only local files and existing optional database configuration. Kubernetes manifests are provided, but no Celery, Helm, Terraform, broker, or cloud scheduler was introduced.
 
 ### Why Airflow differs from Spark
 
@@ -2182,55 +2182,225 @@ Spark is the machine that handles boxes. Airflow is the timetable telling the ma
 
 Airflow coordinates batch work at the application level. Kubernetes places and operates containers across machines. Kubernetes does not inherently understand clinical data layers or quality gates; Airflow does not provide pod networking, resource isolation, or cluster deployment.
 
-### Future Kubernetes deployment
+## Optional Kubernetes deployment
 
-```mermaid
-flowchart TD
- K["Future Kubernetes cluster"] --> API["Analyst API deployment"]
- K --> AW["Airflow webserver and scheduler"]
- K --> WORK["Registered task execution"]
- K --> SPARK["Spark driver/executors"]
- AW --> WORK
- WORK --> EXT["Future external metadata and object storage"]
- API --> PG["External PostgreSQL serving"]
-```
+Kubernetes is an open-source system for placing containers on machines, keeping them running, connecting them, updating them, and attaching configuration and storage. It is not a data-processing engine, a workflow scheduler, a clinical policy system, or a replacement for the application's contracts.
 
-This diagram is a future architecture, not code delivered here. Kubernetes must wait for externalized state, independently containerized services, health/readiness contracts, resource requirements, and operational recovery tests.
-
-### Future cloud deployment
+This repository uses Kubernetes only to run the same FastAPI, Streamlit, PostgreSQL, Airflow, and optional Spark commands already used elsewhere. No Kubernetes manifest contains SQL, transformation code, metric definitions, privacy thresholds, lineage rules, or analytical policy.
 
 ```mermaid
 flowchart LR
- SCHED["Managed or self-hosted Airflow"] --> JOBS["Registered Python/Spark jobs"]
- JOBS --> OBJ["Future governed object storage"]
- OBJ --> DB["Managed serving database"]
- DB --> API["Deployed bounded analyst"]
- META["External lineage metadata"] --> API
- JOBS --> META
+ USER["User"] --> ING["Optional Ingress"]
+ ING --> UI["Streamlit Service"]
+ ING --> API["FastAPI Service"]
+ ING --> WEB["Airflow webserver Service"]
+ API --> DATA["Existing serving and audit contracts"]
+ SCHED["Airflow scheduler"] --> PIPE["Existing Python or Spark pipeline"]
+ PIPE --> LAKE["Lake PVC"]
+ PIPE --> PG["PostgreSQL StatefulSet"]
 ```
 
-No cloud service, SDK, object store, managed scheduler, Terraform, or infrastructure template is included. A future cloud milestone must preserve the same IDs, quality policy, publication rules, and lineage.
+### Kubernetes concepts in plain English
 
-#### What this means in plain English
+A **Pod** is the smallest runnable unit. It contains one or more containers that share a network identity and lifecycle. A Pod is like one workbench with the tools needed for one process.
 
-The project has drawn where future buildings might stand; it has not signed a cloud lease or poured a Kubernetes foundation.
+A **Deployment** maintains replaceable Pods for services such as FastAPI, Streamlit, the Airflow scheduler, and the Airflow webserver. If a Pod exits, the Deployment creates another. During an update it follows the declared rollout strategy.
 
-### Airflow production-hardening roadmap
+A **Service** gives changing Pods a stable in-cluster name and port. All included Services are `ClusterIP`; nothing assumes a public cloud load balancer.
 
-Before production use:
+A **StatefulSet** gives a stateful Pod stable identity and storage. PostgreSQL uses one because its database files must survive Pod replacement and must not be treated like disposable web replicas.
 
-- install Airflow with official constraints in a dedicated Linux environment;
-- use a supported external Airflow metadata database;
-- externalize lake and platform metadata from one local filesystem;
-- define service accounts, secrets, encryption, retention, and audit controls;
-- add scheduler/webserver health checks and operational alerts;
-- separate loader and analytical database roles;
-- run live Spark and PostgreSQL integration gates;
-- add idempotency tests under task termination and scheduler restart;
-- define independent container images and resource requirements;
-- add Kubernetes only after those prerequisites pass.
+A **PersistentVolumeClaim**, or **PVC**, asks the cluster for durable storage. The manifests do not name a storage class, so the cluster's default provisioner decides how to satisfy the request.
 
-The next recommended milestone is operational service-boundary and external-state preparation for Kubernetes—not Kubernetes manifests themselves.
+A **ConfigMap** contains non-secret environment configuration such as paths, engine selection, schedules, retry counts, and Spark settings. A **Secret** contains credentials and cryptographic keys. [`secret.template.yaml`](kubernetes/secret.template.yaml) contains placeholders only and is intentionally excluded from Kustomize; never commit a populated copy.
+
+A **probe** is a check performed by Kubernetes. A startup probe grants slow processes time to initialize. A readiness probe controls whether a Pod receives traffic. A liveness probe detects a stuck process that should be restarted.
+
+### Component layout
+
+| Component | Kubernetes resource | Port | Readiness | Persistence | Default scaling |
+|---|---|---:|---|---|---:|
+| FastAPI | Deployment + ClusterIP Service | 8000 | `/health` | lake, metadata, audit PVCs | 1 |
+| Streamlit | Deployment + ClusterIP Service | 8501 | `/_stcore/health` | metadata and audit PVCs | 1 |
+| PostgreSQL | StatefulSet + headless ClusterIP Service | 5432 | `pg_isready` | StatefulSet volume claim | 1 |
+| Airflow scheduler | Deployment | none | `airflow jobs check` | lake, metadata, audit, logs PVCs | 1 |
+| Airflow webserver | Deployment + ClusterIP Service | 8080 | `/health` | logs PVC | 1 |
+| Spark runner | suspended Job template | none | job exit status | lake, metadata, audit PVCs | on demand |
+
+Each file can be applied independently after its namespace, configuration, Secret, and required PVCs exist. [`kustomization.yaml`](kubernetes/kustomization.yaml) provides the complete baseline resource list but deliberately excludes the placeholder Secret and optional Ingress.
+
+### Kubernetes deployment graph
+
+```mermaid
+flowchart TD
+ NS["Namespace"] --> CFG["ConfigMap + operator-created Secret"]
+ CFG --> PG["PostgreSQL StatefulSet"]
+ PG --> AM["Airflow metadata migration init containers"]
+ AM --> AS["Airflow scheduler"]
+ AM --> AW["Airflow webserver"]
+ CFG --> API["FastAPI Deployment"]
+ CFG --> UI["Streamlit Deployment"]
+ CFG --> SJ["Optional suspended Spark Job"]
+```
+
+### Configuration and secrets
+
+[`configmap.yaml`](kubernetes/configmap.yaml) externalizes database selection, database and metadata paths, lake root, transformation engine, Spark master and partitions, Airflow schedule and retry behavior, Airflow executor and log paths, and the OpenAI model. [`secret.template.yaml`](kubernetes/secret.template.yaml) externalizes PostgreSQL credentials and URLs, Airflow's metadata URL, Fernet key and webserver secret, and the optional OpenAI API key.
+
+The checked-in Secret is not deployable configuration. Create a populated Secret through the operator's approved secret-management process:
+
+```powershell
+Copy-Item kubernetes/secret.template.yaml kubernetes/secret.local.yaml
+# Replace every REPLACE_* value, then apply it. Do not commit secret.local.yaml.
+kubectl apply -f kubernetes/secret.local.yaml
+```
+
+For the default lightweight deployment, `CLINICAL_SQL_DATABASE_BACKEND=sqlite` and Python transformations remain canonical. To use PostgreSQL serving, initialize the analytical schema through the existing loader and change the backend configuration only after PostgreSQL is ready. Configuration changes select existing behavior; they do not define new behavior.
+
+### Networking and optional Ingress
+
+```mermaid
+flowchart LR
+ CLIENT["Browser or API client"] --> CTRL["Operator-provided Ingress controller"]
+ CTRL -->|"healthcare.local"| UISVC["ui ClusterIP"]
+ CTRL -->|"api.healthcare.local"| APISVC["api ClusterIP"]
+ CTRL -->|"airflow.healthcare.local"| AFSVC["airflow-webserver ClusterIP"]
+ APISVC --> APIPOD["FastAPI Pod"]
+ UISVC --> UIPOD["Streamlit Pod"]
+ AFSVC --> AFPOD["Airflow webserver Pod"]
+```
+
+[`ingress.example.yaml`](kubernetes/ingress.example.yaml) is an example, not a default dependency. It assumes a separately installed `nginx` ingress class and local DNS entries. Replace hosts and add TLS according to the target environment. The baseline creates no `LoadBalancer`, public IP, DNS record, or certificate.
+
+### Persistent storage
+
+```mermaid
+flowchart TD
+ PG["PostgreSQL StatefulSet"] --> PGPVC["postgres-data claim"]
+ API["API"] --> AUD["audit-data PVC"]
+ UI["UI"] --> AUD
+ AF["Airflow scheduler"] --> LAKE["lake-data PVC"]
+ AF --> META["platform-metadata PVC"]
+ AF --> LOGS["airflow-logs PVC"]
+ SP["Optional Spark Job"] --> LAKE
+ SP --> META
+```
+
+PVCs are generic and use `ReadWriteOnce`. This is portable for a local or single-node demonstration, but it is not a claim that arbitrary multi-node clusters can mount the same filesystem concurrently. API, UI, scheduler, and Spark replicas must remain at one when they share SQLite or RWO state. Production scaling requires proven RWX storage or externalized databases and object storage while preserving existing IDs and atomic-publication contracts.
+
+### Health, readiness, restart, and graceful shutdown
+
+```mermaid
+flowchart LR
+ START["Container starts"] --> SP["Startup probe"]
+ SP -->|"not ready yet"| WAIT["Wait within failure threshold"]
+ WAIT --> SP
+ SP -->|"passes"| RP["Readiness probe"]
+ RP -->|"passes"| TRAFFIC["Service sends traffic"]
+ RP -->|"fails"| REMOVE["Remove Pod from Service endpoints"]
+ TRAFFIC --> LP["Liveness probe repeats"]
+ LP -->|"fails repeatedly"| RESTART["Kubernetes restarts container"]
+```
+
+Deployments and the StatefulSet use Kubernetes' required `Always` restart behavior; the finite Spark Job explicitly uses `Never` and bounded retries. API and UI receive 30 seconds to terminate, while PostgreSQL and Airflow receive 60 seconds. Uvicorn receives an explicit graceful-shutdown timeout, PostgreSQL requests a fast controlled stop, and Airflow processes receive normal termination signals. Resource requests help scheduling; limits bound runaway local work.
+
+### Rolling updates and disruption
+
+```mermaid
+sequenceDiagram
+ participant D as Deployment
+ participant O as Old Pod
+ participant N as New Pod
+ D->>N: Create updated Pod
+ N->>N: Startup and readiness probes
+ N-->>D: Ready
+ D->>O: Send termination signal
+ O->>O: Finish within grace period
+ O-->>D: Exit
+```
+
+API and UI use rolling updates with zero planned unavailability and one surge Pod. Their PodDisruptionBudgets block voluntary eviction of the only ready replica. That protects availability but can block node drains; operators should temporarily adjust the PDB or provide external shared state and additional replicas before maintenance. Airflow uses `Recreate` because this baseline has one scheduler and a local RWO log volume. PostgreSQL remains one StatefulSet replica; the manifest does not pretend to provide database high availability.
+
+### Container images
+
+The manifests use explicit, non-`latest` image references:
+
+- `ghcr.io/vdeeplearning/agentic_healthcare_data_platform:0.1.0` for API and UI;
+- `ghcr.io/vdeeplearning/agentic_healthcare_data_platform-airflow:0.1.0` built with [`docker/Dockerfile.airflow`](docker/Dockerfile.airflow);
+- `ghcr.io/vdeeplearning/agentic_healthcare_data_platform-spark:0.1.0` built with [`docker/Dockerfile.spark`](docker/Dockerfile.spark);
+- `postgres:17-alpine` for PostgreSQL.
+
+Build, scan, push, or load these tags into the target cluster before deployment. `IfNotPresent` supports locally loaded images without assuming a registry credential. Production releases should use immutable digest references.
+
+### Deploying the baseline
+
+Prerequisites are a Kubernetes cluster, `kubectl`, a default storage provisioner, built images, and a securely populated Secret. Then:
+
+```powershell
+python scripts/validate_kubernetes.py
+kubectl kustomize kubernetes
+kubectl apply -f kubernetes/namespace.yaml
+kubectl apply -f kubernetes/secret.local.yaml
+kubectl apply -k kubernetes
+kubectl -n agentic-healthcare get pods,services,pvc
+kubectl -n agentic-healthcare rollout status deployment/api
+kubectl -n agentic-healthcare rollout status deployment/ui
+kubectl -n agentic-healthcare rollout status statefulset/postgres
+kubectl -n agentic-healthcare rollout status deployment/airflow-scheduler
+kubectl -n agentic-healthcare rollout status deployment/airflow-webserver
+```
+
+The Spark Job is suspended by default. Review its profile, resources, storage, and engine image before setting `spec.suspend` to `false` or creating a separately named Job from the template.
+
+### Kubernetes versus Docker Compose
+
+Docker Compose starts a related set of containers on one Docker host with concise local configuration. Kubernetes continuously reconciles declared workloads, stable Services, probes, rolling updates, disruption policy, resources, and persistent claims across a cluster.
+
+Compose remains the recommended quick local demonstration and is not deprecated. Kubernetes is appropriate when an operator needs cluster scheduling and operational controls. Both invoke the same application commands and preserve the same API and analytical architecture.
+
+### Manifest validation and current verification
+
+`scripts/validate_kubernetes.py` parses every YAML document and checks resource identity, namespace consistency, ClusterIP-only Services, generic PVCs, workload grace periods, Job restart behavior, explicit non-`latest` images, image pull policy, resource requests and limits, probes, referenced configuration, secret placeholders, and Kustomize membership. Tests run this validator in CI. `kubectl kustomize kubernetes` additionally verifies native rendering.
+
+In the current verification environment, Docker and Docker Compose clients are installed and Compose configuration renders successfully. `kubectl` 1.34.1 and Kustomize 5.7.1 render the resources. No Kubernetes API server is configured: client-side apply attempts `localhost:8080` and is refused. Neither kind nor minikube is installed. Therefore API, UI, PostgreSQL, Airflow, PVC binding, Ingress, and probe success are **not** claimed as live-deployed here.
+
+### Current Kubernetes limitations
+
+- No live cluster deployment was available for this verification.
+- Checked-in GHCR tags are deployment references; image publication and registry access are operator responsibilities.
+- Generic PVCs depend on the cluster's default storage provisioner.
+- RWO local-file storage constrains replicas and multi-node placement.
+- PostgreSQL has one replica, no automated backup, no TLS policy, and no failover controller.
+- Airflow uses LocalExecutor, one scheduler, and one webserver; no Celery or KubernetesExecutor is included.
+- Spark runs as a suspended local-mode Job template, not a Spark Operator or distributed executor deployment.
+- Ingress needs an external controller, DNS, and TLS configuration.
+- No NetworkPolicy, service mesh, external secret manager, autoscaler, or observability stack is included.
+
+### Future Helm roadmap
+
+Helm is deliberately deferred. A future chart should emerge only after real deployments establish stable values, upgrade paths, storage variants, secret integration, and rollback behavior. It must render the same resources and must not template business policy.
+
+### Future production deployment
+
+```mermaid
+flowchart LR
+ USERS["Authenticated users"] --> EDGE["TLS ingress and identity"]
+ EDGE --> API["Horizontally scalable API"]
+ EDGE --> UI["UI"]
+ AIR["Operational Airflow"] --> JOBS["Registered Python/Spark jobs"]
+ JOBS --> OBJ["Governed external object storage"]
+ JOBS --> META["External lineage metadata"]
+ API --> SERVE["Highly available serving database"]
+ OBS["Metrics, logs, traces, alerts"] --> API
+ OBS --> AIR
+ OBS --> JOBS
+```
+
+Production hardening should add workload identities, TLS, network policy, an external secret manager, encrypted replicated storage, backups and recovery drills, external metadata, high-availability PostgreSQL or a managed equivalent, autoscaling evidence, immutable image digests, admission/security policy, monitoring, and tested upgrades.
+
+### Future cloud deployment roadmap
+
+No cloud service, SDK, managed database, object store, load balancer annotation, Terraform module, or provider-specific storage class is included. Future provider overlays may connect Kubernetes to managed storage, identity, DNS, certificates, and databases only through existing configuration and storage interfaces. They must preserve dataset identity, quality policy, publication rules, audit behavior, and lineage.
 
 ## Design decisions, limits, and production hardening
 
