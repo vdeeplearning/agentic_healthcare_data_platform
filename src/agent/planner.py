@@ -28,10 +28,12 @@ class ExistingPlanner:
         db_path: Path,
         curated_lookup: Callable[[str], tuple[Any, str] | None],
         live_generator: Callable[..., LiveProposal],
+        catalog_provider: Callable[[], Any] | None = None,
     ):
         self.db_path = Path(db_path)
         self._curated_lookup = curated_lookup
         self._live_generator = live_generator
+        self._catalog_provider = catalog_provider
 
     def curated(self, question: str) -> tuple[Any, str] | None:
         return self._curated_lookup(question)
@@ -39,4 +41,5 @@ class ExistingPlanner:
     def live(self, question, api_key, model, conversation_context):
         # The legacy generator discovers and bounds catalog metadata itself; it
         # never receives a connection or execution capability.
-        return self._live_generator(question, api_key, self.db_path, model, conversation_context)
+        catalog = self._catalog_provider() if self._catalog_provider else None
+        return self._live_generator(question, api_key, self.db_path, model, conversation_context, catalog_metadata=catalog)

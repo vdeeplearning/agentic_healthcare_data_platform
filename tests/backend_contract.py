@@ -15,7 +15,7 @@ class QueryBackendContract:
         assert {column.name for column in relations["encounters"].columns} >= {"encounter_id", "hospital_id", "total_cost"}
         assert all(column.data_type == column.data_type.lower() for relation in catalog.relations for column in relation.columns)
         assert catalog.schema_version and catalog.sql_dialect
-        assert {"audit_runs", "sqlite_schema"} <= set(catalog.prohibited_objects)
+        assert "audit_runs" in catalog.prohibited_objects and len(catalog.prohibited_objects)>=2
         assert catalog.capabilities.read_only and catalog.capabilities.result_limit
         assert backend.name
 
@@ -75,3 +75,9 @@ class QueryBackendContract:
         report = validate_sql(sql, catalog=catalog)
         assert not report.valid and any("maximum of 8 joins" in error for error in report.errors)
 
+    def test_backend_timeout_contract(self, backend, timeout_sql):
+        try:
+            backend.execute(timeout_sql,ExecutionContext(run_id="timeout-contract",timeout_seconds=0),1)
+            raise AssertionError("backend did not cancel the timed query")
+        except QueryBackendError as exc:
+            assert exc.backend_name==backend.name and exc.code=="cancelled"

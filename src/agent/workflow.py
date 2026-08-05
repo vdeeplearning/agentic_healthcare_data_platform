@@ -26,7 +26,7 @@ class Analyst:
         self.query_backend=query_backend or SQLiteQueryBackend(self.db_path)
         self._uses_default_audit_store=audit_store is None
         self.audit_store=audit_store or SQLiteAuditStore(self.db_path)
-        self.planner=planner or ExistingPlanner(self.db_path,curated,generate_live_proposal)
+        self.planner=planner or ExistingPlanner(self.db_path,curated,generate_live_proposal,self.query_backend.discover_catalog)
         self.dataset_identity=dataset_identity
         self.dataset_snapshot=dataset_snapshot or resolve_active_snapshot(self.db_path)
     def analyze(self,question:str,api_key:str|None=None,conversation_context:list[dict[str,Any]]|None=None)->AnalysisResponse:
@@ -84,7 +84,7 @@ class Analyst:
         if plan.statistical_test_type=="chi_square" and len(rows)==2:
             table=[[int(r["numerator"]),int(r["denominator"]-r["numerator"])] for r in rows]; statistic=run_statistical_tool("chi_square",table=table); trace.append(TraceEvent(step="run_approved_statistical_tool",status="ok",detail="Ran registered chi-square tool; no arbitrary code executed."))
         answer=self._answer(plan,rows,statistic); trace.append(TraceEvent(step="compose_grounded_answer",status="ok",detail="Template used verified result fields only.")); trace.append(TraceEvent(step="validate_answer_faithfulness",status="ok",detail="Numeric claims originate from deterministic result formatting."))
-        response=self._finish(run_id,question,"completed",answer,plan,sql,rows,warnings,trace,validation,statistics=statistic,elapsed=elapsed,query_plan=query_plan)
+        response=self._finish(run_id,question,"completed",answer,plan,sql,rows,warnings,trace,validation,statistics=statistic,elapsed=elapsed,query_plan=query_plan,execution_provenance=execution.provenance)
         return response
     @staticmethod
     def _looks_like_follow_up(question:str)->bool:
@@ -122,8 +122,8 @@ class Analyst:
         message=str(exc).replace(api_key,"[REDACTED]")
         message=re.sub(r"sk-[A-Za-z0-9_*\-]{8,}","[REDACTED_API_KEY]",message)
         return message[:500]
-    def _finish(self,run_id,question,status,answer,plan,sql,rows,warnings,trace,validation,clarification=None,statistics=None,elapsed=None,query_plan=None):
-        response=AnalysisResponse(run_id=run_id,status=status,question=question,answer=answer,clarification_question=clarification,plan=plan,sql=sql,columns=list(rows[0]) if rows else [],rows=rows,warnings=list(dict.fromkeys(warnings)),validation=validation,trace=trace,metric_definition=METRICS[plan.metric_name].model_dump() if plan and plan.metric_name in METRICS else None,statistics=statistics,execution_time_ms=elapsed,provenance={"database":str(self.db_path),"read_only":True,"query_plan":query_plan or [],"synthetic_data":True})
+    def _finish(self,run_id,question,status,answer,plan,sql,rows,warnings,trace,validation,clarification=None,statistics=None,elapsed=None,query_plan=None,execution_provenance=None):
+        response=AnalysisResponse(run_id=run_id,status=status,question=question,answer=answer,clarification_question=clarification,plan=plan,sql=sql,columns=list(rows[0]) if rows else [],rows=rows,warnings=list(dict.fromkeys(warnings)),validation=validation,trace=trace,metric_definition=METRICS[plan.metric_name].model_dump() if plan and plan.metric_name in METRICS else None,statistics=statistics,execution_time_ms=elapsed,provenance={"database":(execution_provenance or {}).get("database",str(self.db_path)),"read_only":True,"query_plan":query_plan or [],"synthetic_data":True})
         snapshot=self.dataset_snapshot
         audit_provenance={"dataset_id":snapshot.dataset_id,"manifest_id":snapshot.manifest_id,"snapshot_id":snapshot.snapshot_id,"backend_name":snapshot.backend_name,"schema_version":snapshot.schema_version,"loader_version":snapshot.loader_version} if snapshot else None
         if self.db_path.exists() or not self._uses_default_audit_store: self.audit_store.write({"run_id":run_id,"question":question,"normalized_question":plan.normalized_question if plan else question.lower(),"model_name":self.model if any(event.detail.startswith("OpenAI") for event in trace) else "deterministic-demo","plan":plan.model_dump() if plan else None,"sql":sql,"validation_status":"passed" if validation and validation.valid else status,"execution_status":status,"row_count":len(rows),"execution_time_ms":elapsed,"statistical_tools":statistics,"warnings":warnings,"final_answer":answer,"provenance":audit_provenance})

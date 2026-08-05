@@ -3,14 +3,21 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
+from pydantic import AliasChoices,Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Environment-backed settings; secrets are never serialized to audit logs."""
 
-    model_config = SettingsConfigDict(env_prefix="CLINICAL_SQL_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="CLINICAL_SQL_", env_file=".env", extra="ignore",populate_by_name=True)
     db_path: Path = Path("data/generated/clinical.db")
+    database_backend: Literal["sqlite","postgres"] = Field(default="sqlite",validation_alias=AliasChoices("DATABASE_BACKEND","CLINICAL_SQL_DATABASE_BACKEND"))
+    postgres_dsn: str | None = Field(default=None,validation_alias=AliasChoices("POSTGRES_DSN","DATABASE_URL","CLINICAL_SQL_POSTGRES_DSN"))
+    postgres_schema: str = "public"
+    postgres_storage_identity: str = "postgres:public"
+    metadata_path: Path | None = None
     demo_mode: bool = True
     seed: int = 42
     query_timeout_seconds: float = 5.0

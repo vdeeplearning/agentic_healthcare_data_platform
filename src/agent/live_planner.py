@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from src.agent.schemas import AnalysisPlan
 from src.database.connection import schema_catalog
+from src.database.models import CatalogMetadata
 from src.metrics.registry import METRICS
 
 
@@ -28,12 +29,14 @@ def generate_live_proposal(
     db_path: Path,
     model: str = "gpt-5.6-sol",
     conversation_context: list[dict[str, Any]] | None = None,
+    *, catalog_metadata: CatalogMetadata | None = None,
 ) -> LiveProposal:
     """Create a typed plan and SQL candidate using OpenAI Structured Outputs."""
     from openai import OpenAI
 
-    catalog = schema_catalog(db_path)
+    catalog = catalog_metadata.column_names() if catalog_metadata else schema_catalog(db_path)
     catalog.pop("audit_runs", None)
+    dialect = catalog_metadata.sql_dialect if catalog_metadata else "sqlite"
     schema_text = "\n".join(
         f"- {table}({', '.join(sorted(columns))})"
         for table, columns in sorted(catalog.items())
@@ -44,7 +47,7 @@ def generate_live_proposal(
         for name, metric in METRICS.items()
     )
     instructions = f"""You are the planning component of a constrained synthetic-healthcare SQL analyst.
-Return the required structured object. First create the AnalysisPlan, then provide exactly one SQLite SELECT query.
+Return the required structured object. First create the AnalysisPlan, then provide exactly one {dialect} SELECT query.
 
 Hard rules:
 - Use only the schema below. Never invent a table or column.

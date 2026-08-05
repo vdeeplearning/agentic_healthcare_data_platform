@@ -52,5 +52,5 @@ def validate_sql(sql: str,path: Path|None=None,max_joins:int=8,max_columns:int=2
         if fname and fname not in APPROVED_FUNCTIONS: errors.append(f"Function is not allowlisted: {fname}")
     if select and select.args.get("limit") is None:
         select.set("limit",exp.Limit(expression=exp.Literal.number(max_rows))); warnings.append(f"LIMIT {max_rows} inserted.")
-    normalized=tree.sql(dialect="sqlite")
+    normalized=tree.sql(dialect=dialect)
     return ValidationReport(valid=not errors,errors=list(dict.fromkeys(errors)),warnings=warnings,tables=tables,columns=sorted(set(columns)),sql=normalized)

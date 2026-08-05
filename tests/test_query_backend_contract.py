@@ -14,6 +14,10 @@ def catalog(backend):
     return backend.discover_catalog()
 
 
+@pytest.fixture
+def timeout_sql():
+    return "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM x WHERE n<100000000) SELECT SUM(n) FROM x"
+
+
 class TestSQLiteQueryBackendContract(QueryBackendContract):
     """The permanent SQLite fixture runs the suite future backends must share."""
-
