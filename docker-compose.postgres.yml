@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: clinical
+      POSTGRES_USER: clinical_loader
+      POSTGRES_PASSWORD: synthetic-local-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clinical_loader -d clinical"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+  postgres-seed:
+    build: .
+    command: ["python","-m","src.database.postgres_loader","--dsn","postgresql://clinical_loader:synthetic-local-only@postgres:5432/clinical","--patients","2500","--encounters","10000","--metadata-path","/app/data/generated/postgres.metadata.db","--storage-identity","postgres:public"]
+    volumes: ["clinical-data:/app/data/generated"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+  api:
+    environment:
+      DATABASE_BACKEND: postgres
+      POSTGRES_DSN: postgresql://clinical_loader:synthetic-local-only@postgres:5432/clinical
+      CLINICAL_SQL_POSTGRES_SCHEMA: public
+      CLINICAL_SQL_POSTGRES_STORAGE_IDENTITY: postgres:public
+      CLINICAL_SQL_METADATA_PATH: /app/data/generated/postgres.metadata.db
+    depends_on:
+      postgres-seed:
+        condition: service_completed_successfully
+volumes:
+  postgres-data: {}
