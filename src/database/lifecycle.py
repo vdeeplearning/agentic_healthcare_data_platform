@@ -15,6 +15,9 @@ from src.database.records import LogicalRecord
 
 GENERATOR_VERSION = "1.0.0"
 SCHEMA_VERSION = "1.0"
+LOADER_VERSION = "1.0.0"
+MANIFEST_SCHEMA_VERSION = "1.0"
+SNAPSHOT_SCHEMA_VERSION = "1.0"
 DISCLAIMER = "Synthetic data only; not for clinical decisions or patient care."
 
 
@@ -43,6 +46,8 @@ class DatasetIdentity(BaseModel):
 
 
 class DatasetManifest(BaseModel):
+    manifest_id: str | None = None
+    manifest_schema_version: str = MANIFEST_SCHEMA_VERSION
     dataset_id: str
     generator_version: str
     schema_version: str
@@ -66,8 +71,30 @@ class LogicalRecordBatch:
     records: tuple[LogicalRecord, ...]
 
 
+class DatasetSnapshot(BaseModel):
+    snapshot_id: str
+    dataset_id: str
+    manifest_id: str
+    loader_name: str
+    loader_version: str
+    backend_name: str
+    schema_version: str
+    snapshot_schema_version: str = SNAPSHOT_SCHEMA_VERSION
+    load_timestamp: datetime
+    load_status: str
+    storage_identity: str
+    materialization_parameters: dict[str, Any] = Field(default_factory=dict)
+    source_batch_ids: list[str] = Field(default_factory=list)
+    table_row_counts: dict[str, int] = Field(default_factory=dict)
+    validation_summary: dict[str, Any] = Field(default_factory=dict)
+    active: bool = False
+    replaces_snapshot_id: str | None = None
+    provenance_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class LoadResult(BaseModel):
     manifest: DatasetManifest
+    snapshot: DatasetSnapshot | None = None
     row_counts: dict[str, int]
     completed: bool
     validation_summary: dict[str, Any] = Field(default_factory=dict)
@@ -110,6 +137,73 @@ def new_manifest(seed: int, patients: int, encounters: int) -> DatasetManifest:
         generation_parameters=identity.parameters,
         generation_timestamp=datetime.now(timezone.utc),
     )
+
+
+def _stable_hash(prefix: str, payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+    return f"{prefix}-{hashlib.sha256(encoded).hexdigest()[:20]}"
+
+
+def manifest_identity(manifest: DatasetManifest) -> str:
+    """Identify logical manifest content; timestamps and load-event fields are excluded."""
+    return _stable_hash("manifest", {
+        "dataset_id": manifest.dataset_id,
+        "generator_version": manifest.generator_version,
+        "schema_version": manifest.schema_version,
+        "fixture_profile": manifest.fixture_profile,
+        "random_seed": manifest.random_seed,
+        "generation_parameters": manifest.generation_parameters,
+        "entity_row_counts": manifest.entity_row_counts,
+        "stable_summaries": manifest.stable_summaries,
+        "source_type": manifest.source_type,
+        "clinical_use_disclaimer": manifest.clinical_use_disclaimer,
+        "manifest_schema_version": manifest.manifest_schema_version,
+    })
+
+
+def snapshot_identity(*, dataset_id: str, manifest_id: str, backend_name: str, schema_version: str, loader_name: str, loader_version: str, storage_identity: str, materialization_parameters: dict[str, Any] | None = None) -> str:
+    """Identify a materialization; load timestamps deliberately do not participate."""
+    return _stable_hash("snapshot", {
+        "dataset_id": dataset_id,
+        "manifest_id": manifest_id,
+        "backend_name": backend_name,
+        "schema_version": schema_version,
+        "loader_name": loader_name,
+        "loader_version": loader_version,
+        "storage_identity": storage_identity,
+        "materialization_parameters": materialization_parameters or {},
+        "snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION,
+    })
+
+
+class CompatibilityDecision(BaseModel):
+    compatible: bool
+    requires_regeneration: bool = False
+    requires_rematerialization: bool = False
+    reason: str
+
+
+class VersionCompatibilityPolicy:
+    """Small current-major policy, not a general-purpose schema registry."""
+
+    @staticmethod
+    def _major(version: str) -> int:
+        try: return int(version.split(".", 1)[0])
+        except (ValueError, AttributeError): raise ValueError(f"Invalid version: {version}")
+
+    def check(self, *, generator_version: str, logical_schema_version: str, loader_version: str, manifest_schema_version: str = MANIFEST_SCHEMA_VERSION, snapshot_schema_version: str = SNAPSHOT_SCHEMA_VERSION) -> CompatibilityDecision:
+        if self._major(manifest_schema_version) != self._major(MANIFEST_SCHEMA_VERSION):
+            return CompatibilityDecision(compatible=False, reason="Manifest schema major version is incompatible.")
+        if self._major(snapshot_schema_version) != self._major(SNAPSHOT_SCHEMA_VERSION):
+            return CompatibilityDecision(compatible=False, requires_rematerialization=True, reason="Snapshot schema major version is incompatible.")
+        if self._major(generator_version) != self._major(GENERATOR_VERSION):
+            return CompatibilityDecision(compatible=False, requires_regeneration=True, reason="Generator major version is incompatible.")
+        if self._major(logical_schema_version) != self._major(SCHEMA_VERSION):
+            return CompatibilityDecision(compatible=False, requires_regeneration=True, requires_rematerialization=True, reason="Logical schema major version is incompatible.")
+        if self._major(loader_version) != self._major(LOADER_VERSION):
+            return CompatibilityDecision(compatible=False, requires_rematerialization=True, reason="Loader major version is incompatible.")
+        rematerialize = loader_version != LOADER_VERSION
+        return CompatibilityDecision(compatible=True, requires_rematerialization=rematerialize, reason="Versions share supported major compatibility.")
 
 
 # Imported last to avoid a lifecycle/generator/loader import cycle while retaining
