@@ -1401,7 +1401,7 @@ flowchart LR
  PARITY --> PUBLISH["Only validated equivalent outputs publish"]
 ```
 
-The recommended next milestone is PySpark integration implementing these exact three transformation boundaries. Local Python remains the compatibility fixture.
+This release now implements that optional PySpark boundary while retaining local Python as the compatibility fixture. Airflow orchestration is the next milestone.
 
 ### What this means in plain English
 
@@ -1449,8 +1449,8 @@ Kubernetes is the building manager. The project first defines the rooms, machine
 
 The final local run produced:
 
-- **146 passed, 13 skipped**, with every skip requiring the unavailable live PostgreSQL DSN;
-- **93.45% coverage**, above the 92% gate and the prior 92.19% baseline;
+- **156 passed, 16 skipped**: 13 require the unavailable live PostgreSQL DSN and 3 require a real Java/PySpark runtime;
+- **92.97% coverage**, above the 92% gate;
 - successful compilation of `src` and `tests`;
 - valid original and PostgreSQL-overlay Compose configurations;
 - test lake profile: 300 patients and 1,200 encounters, validated through gold and published to SQLite;
@@ -1491,6 +1491,406 @@ Production hardening should add an object-store adapter with conditional writes 
 ### What this means in plain English
 
 This release proves the chain of custody and quality process on one machine. It does not pretend that a local folder is a globally durable production lake.
+
+## Optional PySpark transformation engine
+
+### What changed in this milestone
+
+The raw/bronze/silver/gold contracts now have a narrow execution boundary with two implementations:
+
+- `LocalPythonTransformationEngine` wraps the existing Python behavior and remains the default and compatibility oracle.
+- `PySparkTransformationEngine` executes the same reviewed transitions in local Spark mode and writes Parquet candidates.
+
+Spark is installed only with `pip install -e ".[spark,dev]"`. It does not participate in `/analyze`, SQL authorization, privacy decisions, metric definitions, statistical approval, or answer grounding. Existing API and UI contracts are unchanged.
+
+```mermaid
+flowchart TD
+ CLI["Lake CLI or registered batch job"] --> E{"Transformation engine"}
+ E -->|default| PY["Canonical local Python engine"]
+ E -->|optional| SP["PySpark engine"]
+ PY --> C["Shared lake manifests and quality policy"]
+ SP --> C
+ C --> P["Atomic validated publication"]
+```
+
+#### What this means in plain English
+
+The project now has a small workshop implementation and an optional industrial-style implementation of the same recipe. Spark receives work only after deterministic software selects a registered transformation.
+
+### What Apache Spark is
+
+Apache Spark is a distributed data-processing engine. It represents tabular work as DataFrames, divides records into partitions, builds a lazy execution plan, and runs tasks on executors coordinated by a driver. This repository initially uses local mode, so those roles run on one developer machine while retaining Spark's programming model.
+
+#### What this means in plain English
+
+Spark is a foreman that divides a large job into work packets. Local mode puts the foreman and workers in one building; a cluster later places the workers on many machines.
+
+### Why Spark was introduced after the lake contracts
+
+Raw immutability, layer meanings, validation results, identities, parentage, and atomic publication already existed before Spark. This prevents an execution engine from quietly becoming the policy definition.
+
+```mermaid
+timeline
+ title Project evolution
+ Bounded SQL analyst : SQLite and deterministic safeguards
+ Platform boundaries : Backends, manifests, snapshots, audit lineage
+ Local medallion lake : Python raw, bronze, silver, gold
+ Current : Optional Spark implementation and parity
+ Next : Airflow scheduling
+ Later : Kubernetes operations
+```
+
+#### What this means in plain English
+
+The recipe and inspection checklist existed before the larger machine arrived. The machine must reproduce them; it cannot rewrite them.
+
+### Python reference engine versus Spark engine
+
+| Concern | Python reference | PySpark |
+|---|---|---|
+| Default | Yes | No |
+| Installation | Standard project dependencies | `.[spark]`, Java 17 recommended |
+| Output | Canonical JSON Lines | Parquet plus canonical logical sidecar |
+| Execution | One Python process | Spark driver and local executors |
+| Policy | Shared deterministic checks | Same shared deterministic checks |
+| Identity | Logical content and transformation | Same logical identity comparison; engine-specific snapshot |
+| Best use | CI, compatibility, small data | Larger local batches and future cluster execution |
+
+Only physical format, part layout, execution time, Spark application ID, engine metadata, and engine-specific snapshot identity may differ. Normalized rows, counts, warnings, rejected counts, validation, dataset identity, and lineage structure must agree.
+
+#### What this means in plain English
+
+The Python and Spark editions may use different packaging, but the chapters, totals, rejected pages, and approval outcome must match.
+
+### Spark DataFrames, sessions, drivers, and executors
+
+A **DataFrame** is a distributed table with named typed columns and a query plan. A **Spark session** is the controlled entry point that configures the application, timezone, shuffle partitions, and master. The **driver** builds plans and coordinates work. **Executors** run tasks over partitions.
+
+```mermaid
+flowchart TD
+ SESSION["SparkSession: UTC, master, partitions"] --> DRIVER["Driver: build reviewed transformation plan"]
+ DRIVER --> E1["Executor task: partition 1"]
+ DRIVER --> E2["Executor task: partition 2"]
+ DRIVER --> EN["Executor task: partition N"]
+ E1 --> OUT["Partitioned Parquet candidate"]
+ E2 --> OUT
+ EN --> OUT
+```
+
+No Spark session is created during import. `SparkSessionFactory` validates configuration, reports missing Java/PySpark clearly, reuses its session within a command, and stops it afterward.
+
+#### What this means in plain English
+
+The session is the job site's controlled power switch. Importing a Python module does not secretly start the machinery.
+
+### Local mode versus a real cluster
+
+`local[*]` uses available cores on one machine. A cluster master would distribute executors across machines. Local mode proves APIs, schemas, transformations, publication, and lineage; it does not prove network behavior, resilience, or cluster-scale speed.
+
+```env
+CLINICAL_SQL_LAKE_TRANSFORM_ENGINE=spark
+CLINICAL_SQL_SPARK_MASTER=local[*]
+CLINICAL_SQL_SPARK_SHUFFLE_PARTITIONS=4
+CLINICAL_SQL_SPARK_LOG_LEVEL=WARN
+```
+
+#### What this means in plain English
+
+Local mode is a full dress rehearsal on one stage, not evidence that a stadium production will have the same performance.
+
+### Lazy evaluation, transformations, and actions
+
+Spark transformations such as filtering, projection, and deduplication describe work lazily. Actions such as `count`, `collect`, and Parquet writes cause Spark to execute the plan. This implementation keeps actions at explicit reconciliation, canonicalization, validation, and publication boundaries.
+
+Narrow transformations can process each partition mostly independently. Wide transformations—such as deduplication by key—may require a shuffle that moves related keys together.
+
+```mermaid
+flowchart LR
+ P1["Partition 1: patient 1, 3"] --> SH["Shuffle by patient key"]
+ P2["Partition 2: patient 1, 2"] --> SH
+ SH --> O1["Output partition: patient 1"]
+ SH --> O2["Output partition: patient 2, 3"]
+```
+
+#### What this means in plain English
+
+Writing instructions on a whiteboard is lazy planning. An action tells the crew to perform them. A shuffle is the expensive moment when workers exchange boxes so matching labels meet.
+
+### Partitions and shuffles
+
+Partitions are Spark's units of parallel work. Their count affects task overhead, memory, and output files. Shuffle partition count is controlled through configuration. Output partition count is recorded in `TransformationRun`; it is operational metadata, not metric or dataset identity.
+
+Wide operations can be necessary for correct composite-key deduplication. They are never introduced by model-generated expressions.
+
+### Why explicit schemas matter
+
+`spark_schemas.py` defines every logical field, nullability rule, numeric representation, identifier, date/timestamp string, and physical metadata column for all eleven entities. Spark does not infer a patient ID as text merely because one file contains nulls.
+
+Physical Parquet includes `_lake_row_order`, source batch ID, record hash, quality flags, and rejection metadata. Canonical logical rows exclude these operational columns before parity and serving.
+
+#### What this means in plain English
+
+The receiving form says which box holds an integer, date text, optional value, or flag. Spark cannot guess a different form from a small sample.
+
+### Why Spark writes multiple Parquet files
+
+Spark normally writes one `part-*` file per output partition plus control files. Those names can change with task scheduling. The platform therefore writes a canonical logical sidecar and calculates the logical checksum from sorted normalized records, canonical field ordering, entity, input parent, transformation version, engine, and format.
+
+```mermaid
+flowchart TD
+ DF["One logical DataFrame"] --> A["part-00000.parquet"]
+ DF --> B["part-00001.parquet"]
+ DF --> S["_SUCCESS"]
+ DF --> L["Canonical _logical.jsonl"]
+ L --> H["Stable logical checksum"]
+ A -. "not identity" .-> H
+ B -. "not identity" .-> H
+```
+
+Part names, directory enumeration order, Spark application ID, and timing do not define logical equality. Engine and format do participate in physical object and snapshot identity so provenance remains honest.
+
+#### What this means in plain English
+
+The same book may be shipped in two boxes today and three tomorrow. Box labels do not change the book's text, but the shipping record still says how it was packaged.
+
+### Spark raw to bronze
+
+The engine validates raw checksums, parses canonical JSON Lines, applies explicit entity schemas, records source batch and record hashes in physical metadata, preserves source values, reports malformed lines, detects duplicate source objects, reconciles expected keys, writes a Parquet candidate, and invokes the shared bronze gate.
+
+```mermaid
+flowchart LR
+ RAW["Immutable raw JSONL"] --> CK["Checksum and parse"]
+ CK --> DF["Explicit-schema DataFrame"]
+ DF --> META["Batch, order, record hash metadata"]
+ META --> PQ["Bronze Parquet candidate"]
+ PQ --> GATE["Shared bronze gate"]
+```
+
+One malformed date-like source line remains in raw. A syntactically malformed line is reported and excluded from bronze logical rows; the failed gate prevents activation. Nothing is silently relabeled as valid.
+
+#### What this means in plain English
+
+Spark opens the preserved envelope and fills a typed intake form. If a line cannot be read, the error is attached to the inspection record and the candidate does not replace the approved shelf.
+
+### Spark bronze to silver
+
+Spark applies non-null identifier requirements and entity-specific simple or composite-key deduplication. The central silver policy performs real ISO date parsing, categorical-domain checks, identifier checks, missingness checks, and referential reconciliation. Rejected counts are compared with Python.
+
+A genuine reference bug was fixed here: the prior date check recognized only the visual `YYYY-MM-DD` shape, so `2025-99-99` could pass. Both engines now use real ISO parsing. Valid frozen snapshot identities remain unchanged.
+
+#### What this means in plain English
+
+A label that looks like a date is no longer enough; the calendar date must actually exist. Both machines use the same calendar test.
+
+### Spark silver to gold
+
+Spark carries validated entity rows into analytics-ready Parquet and invokes the existing gold rules: required entities, numerator no greater than denominator, rates within zero and one, registered metric compatibility, and synthetic-identifier policy. Spark does not own a separate metric formula registry.
+
+```mermaid
+flowchart LR
+ SI["Validated Spark silver"] --> GO["Gold DataFrames"]
+ REG["Existing metric registry and quality policy"] --> CHECK["Deterministic reconciliation"]
+ GO --> CHECK
+ CHECK -->|pass| PUB["Atomic gold activation"]
+ CHECK -->|fail| KEEP["Keep prior active gold"]
+```
+
+#### What this means in plain English
+
+Spark can add the columns quickly, but the project's existing rulebook decides whether the totals and rates are publishable.
+
+### Candidate publication, interruption, and rollback
+
+Spark writes into the lake staging directory. Only complete Parquet output receives its canonical sidecar and moves to a published object path. The manifest is registered, quality gates run, and the active pointer changes only on success. A write exception removes partial staging and leaves the previous active snapshot untouched.
+
+```mermaid
+flowchart TD
+ OLD["Current active snapshot"] --> READ["Readers"]
+ JOB["Spark candidate job"] --> STAGE["Staging Parquet"]
+ STAGE --> Q{"Write and quality pass?"}
+ Q -->|yes| ATOM["Atomic object and active-pointer publication"]
+ ATOM --> NEW["New active snapshot"]
+ Q -->|no| CLEAN["Clean partial staging; retain diagnostics"]
+ CLEAN -.-> READ
+```
+
+#### What this means in plain English
+
+A power failure while printing a new edition cannot remove the approved edition from the shelf.
+
+### Python and Spark parity
+
+The parity framework runs separate stores from identical source inputs, normalizes every row, sorts logical record representations, and hashes content independently of Parquet part names. It compares status, schemas, counts, hashes, rejected rows, warnings, validation, dataset identity, and parentage.
+
+```mermaid
+flowchart TD
+ SOURCE["Identical source batch"] --> PY["Python pipeline"]
+ SOURCE --> SP["Spark pipeline"]
+ PY --> PN["Normalized logical rows and validation"]
+ SP --> SN["Normalized logical rows and validation"]
+ PN --> CMP["Machine-readable parity report"]
+ SN --> CMP
+ CMP --> DEC{"All required fields equal?"}
+```
+
+Covered contract cases include normal test data, deterministic retry, incremental source identity, malformed input, invalid dates, duplicate keys, referential inconsistency, failed publication preservation, registered rates, serving publication, and lineage. Real Spark execution is a separately skipped integration test when Java/PySpark is absent; fake-runtime tests exercise orchestration deterministically without masquerading as a real Spark runtime.
+
+#### What this means in plain English
+
+Both factories receive the same materials. Inspectors compare the products after removing shipping labels and timing stickers.
+
+### Spark gold to SQLite or PostgreSQL
+
+Spark gold uses the existing serving adapters. Canonical logical sidecars reconstruct the existing typed record batches; SQLite and PostgreSQL loaders do not learn Spark-specific policy. The serving snapshot records the exact Spark gold parent.
+
+```mermaid
+flowchart LR
+ SG["Validated Spark gold snapshot"] --> B["Canonical logical batches"]
+ B --> SQ["SQLite loader"]
+ B --> PG["PostgreSQL loader"]
+ SQ --> A["Bounded analyst"]
+ PG --> A
+ A --> AUD["Audit with serving and gold lineage"]
+```
+
+#### What this means in plain English
+
+Spark prepares the approved manuscript. The same established printers produce the SQLite or PostgreSQL edition, and the receipt names the manuscript used.
+
+### Complete Spark lineage to a final answer
+
+```mermaid
+flowchart RL
+ ANSWER["Grounded answer"] --> AUDIT["Audit and validated SQL"]
+ AUDIT --> SERVE["Serving snapshot"]
+ SERVE --> GOLD["Spark gold + application metadata"]
+ GOLD --> SILVER["Spark silver"]
+ SILVER --> BRONZE["Spark bronze"]
+ BRONZE --> RAW["Immutable raw snapshot"]
+ RAW --> BATCH["Source batch and checksummed objects"]
+```
+
+Transformation runs add execution engine, engine version, application ID, master, partitions, records read/written/rejected, physical format, implementation version, and timestamps. These values come from runtime objects, never the LLM. API responses expose no paths, secrets, raw records, or unbounded Spark logs.
+
+### Installation and Java setup
+
+Supported project Python is 3.11 or newer. The optional dependency supports PySpark `>=3.5,<4.1`; Java 17 is the recommended common runtime.
+
+```bash
+pip install -e ".[spark,dev]"
+python -m src.lake.cli spark-capability
+```
+
+On Windows, install a 64-bit JDK 17, set `JAVA_HOME` to the JDK directory, add `%JAVA_HOME%\bin` to `PATH`, open a new terminal, and verify `java -version`. Avoid pointing `JAVA_HOME` at the `bin` directory itself.
+
+On macOS/Linux, install JDK 17 with the platform package manager, export `JAVA_HOME` using the JDK's documented location, add `$JAVA_HOME/bin` to `PATH`, and verify both Java and `python -c "import pyspark"`.
+
+#### What this means in plain English
+
+PySpark is the Python control package; Java runs the Spark engine underneath. Both must be installed before a real Spark session can start.
+
+### Spark CLI workflow
+
+Python remains explicit and default:
+
+```bash
+python -m src.lake.cli --root data/lake run-pipeline --profile test --engine python
+```
+
+Run individual Spark stages:
+
+```bash
+python -m src.lake.cli --root data/lake transform --input-snapshot-id <raw-id> --to bronze --engine spark
+python -m src.lake.cli --root data/lake transform --input-snapshot-id <bronze-id> --to silver --engine spark
+python -m src.lake.cli --root data/lake transform --input-snapshot-id <silver-id> --to gold --engine spark
+```
+
+Run the full Spark path or parity report:
+
+```bash
+python -m src.lake.cli --root data/lake run-pipeline --profile test --engine spark
+python -m src.lake.cli --root data/lake parity --profile test --report data/parity-reports/test.json
+```
+
+Existing `validate`, `lineage`, `publish-sqlite`, and `publish-postgres` commands work for Spark snapshots without a separate serving path.
+
+### Performance demonstration and limitations
+
+The optional `spark-scale` profile contains 50,000 patients and 200,000 encounters. It is excluded from ordinary CI:
+
+```bash
+python -m src.lake.cli --root data/spark spark-performance --profile spark-scale
+```
+
+The command records elapsed time, row counts through the gold manifest, snapshot ID, engine metadata, and whether execution was local. Compare Python and Spark only on equivalent hardware, cache state, partitions, Java/Python versions, and inputs. Local mode has startup and driver-canonicalization costs and does not prove Spark is faster or cluster-scalable.
+
+#### What this means in plain English
+
+The large profile is a load test switch, not a marketing benchmark. One laptop run cannot predict a production cluster.
+
+### Spark troubleshooting
+
+- **`Install .[spark]`:** install the optional group; default installs intentionally omit PySpark.
+- **Java not found:** install JDK 17 and correct `JAVA_HOME`/`PATH`.
+- **Unsupported version:** use PySpark 3.5.x or 4.0.x; the application rejects outside `>=3.5,<4.1`.
+- **Gateway exited:** check `java -version`, architecture, `JAVA_HOME`, and spaces/permissions in temporary directories.
+- **Malformed master:** use `local[*]`, `local[2]`, or a reviewed cluster master.
+- **Schema mismatch:** inspect the candidate validation and explicit entity schema; do not enable inference.
+- **Parquet write failure:** staging is cleaned and the previous active snapshot remains.
+- **Candidate did not activate:** inspect rejected rows, warnings, and deterministic checks.
+- **Unexpected parity difference:** compare logical hashes and schemas before examining physical part files.
+- **Windows file locks:** stop the Spark session and ensure no explorer/process holds the staging directory.
+
+The current verification environment has no `java` command, no `JAVA_HOME`, and no installed PySpark. Real Spark integration and performance tests are therefore skipped, not reported as passed. PyArrow is available, but it is not a substitute for Spark execution. Docker/PostgreSQL remains blocked by the stopped Docker daemon described earlier.
+
+### Why the LLM cannot generate arbitrary Spark code
+
+Only named reviewed methods implement the three transitions. Spark receives typed data and fixed operations after CLI/configuration selection. The LLM cannot submit Python, SQL expressions, UDFs, JARs, or cluster jobs. Spark cannot approve SQL, alter metric definitions, lower quality thresholds, classify privacy, or expose raw records.
+
+#### What this means in plain English
+
+The AI may ask for an analysis later; it cannot walk onto the factory floor and reprogram the machinery.
+
+### Why Airflow is still deferred
+
+Airflow will schedule these established Python/Spark commands, retries, and publication dependencies after real Spark parity is available. It will populate `orchestration_run_id`; it will not embed alternate transformation policy.
+
+```mermaid
+flowchart LR
+ AF["Future Airflow DAG"] --> RAW["Register raw"]
+ RAW --> BR["Run selected bronze engine"]
+ BR --> SI["Run selected silver engine"]
+ SI --> GO["Run selected gold engine"]
+ GO --> PUB["Publish after existing gates"]
+```
+
+### Why Kubernetes is still deferred
+
+Kubernetes follows Airflow, externalized object storage and metadata, independently deployable services, readiness probes, resource limits, secrets, and tested operational behavior.
+
+```mermaid
+flowchart TD
+ K["Future Kubernetes"] --> API["Analyst API"]
+ K --> AIR["Airflow services"]
+ K --> SD["Spark driver pods"]
+ SD --> EX["Spark executor pods"]
+ AIR --> SD
+ API --> PG["PostgreSQL serving"]
+ SD --> OBJ["External object storage"]
+```
+
+No Airflow dependency, DAG, Kubernetes manifest, Spark operator, cloud SDK, Kafka, MinIO, Delta Lake, Iceberg, or Hudi component was added.
+
+### Current limitations and production-hardening roadmap
+
+- Spark logical canonicalization currently collects normalized fixture rows at the driver; future scale requires distributed sorted record-hash aggregation.
+- Canonical JSONL sidecars intentionally trade storage duplication for transparent identity and serving compatibility.
+- Real Spark parity is unavailable until Java and PySpark are installed.
+- Local Parquet atomic rename assumes one filesystem.
+- The large profile is optional and not a CI gate.
+- PostgreSQL live publication still requires a server.
+
+Production hardening should next add Airflow orchestration only after real Spark parity passes. Later work should add distributed logical hashing, object storage with conditional publication, external metadata, encryption and access policy, Spark event/metrics capture, cluster submission, resource testing, and operational recovery. Kubernetes remains after those boundaries exist.
 
 ## Design decisions, limits, and production hardening
 
