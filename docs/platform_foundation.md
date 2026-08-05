@@ -25,7 +25,9 @@ The relationship allowlist remains catalog metadata only. The legacy validator d
 - **Silver:** typed, cleaned, deduplicated, conformed, and deterministically validated records.
 - **Gold:** analytics-ready tables and governed materializations of registered metrics.
 
-The current generator now has fixture-profile, dataset-identity, and loader seams. It still writes only SQLite. Later loaders may emit raw files, Parquet, Spark DataFrames, or PostgreSQL records without changing deterministic domain generation.
+The generator now emits versioned, typed logical records in bounded batches. Fixture profile, deterministic dataset identity, load manifest, and loader contracts are separate from the formulas. The SQLite loader is the only implementation and preserves the historical seed API and results. Later reviewed writers may emit raw files, Parquet, Spark DataFrames, or PostgreSQL records without changing deterministic domain generation.
+
+Every future query backend runs the shared contract suite for normalized catalogs and types, read-only enforcement, safe failures, resource controls, query plans, row normalization, truncation, and provenance. Query execution and data loading remain separate authority boundaries.
 
 PySpark will eventually implement reviewed, versioned transformations and data-quality rules. Models will not generate or execute arbitrary Spark code. PostgreSQL will later be an opt-in serving adapter using a SELECT-only role and server-side statement timeout; SQLite remains available for parity and rollback.
 
@@ -34,4 +36,3 @@ Airflow will schedule ingestion, Spark transformations, data-quality checks, gol
 ## Provenance direction
 
 Future provenance will connect source object and batch IDs to transformation version and Spark job, Airflow DAG run, gold dataset version, serving-database snapshot, validated SQL, approved statistics, and the final audited answer. The new execution context and result provenance fields provide internal homes for dataset and snapshot identity without altering today's public response.
-

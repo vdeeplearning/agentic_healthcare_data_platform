@@ -8,3 +8,5 @@ The graph is bounded: clarification and denial terminate immediately; SQL has at
 
 The workflow now depends on narrow `QueryBackend`, `AuditStore`, and `Planner` contracts. SQLite implementations preserve the original behavior and remain the only enabled implementations. Catalog metadata and query results use engine-neutral internal models, while deterministic SQL authorization, privacy controls, metric governance, result checks, statistics, and answer grounding remain centralized. See [distributed platform foundation](platform_foundation.md) and the [architecture decisions](adr/).
 
+Synthetic construction follows a separate path: the versioned logical generator emits typed entity batches; `SyntheticDatasetLoader` implementations own schema creation, transactional persistence, validation, and manifests. The current `SQLiteSyntheticDatasetLoader` is the only loader. Dataset identity is derived from generation inputs, while load timestamps and backend details belong to the manifest. Relationship metadata is characterized in [relationship policy](relationship_policy.md) but remains intentionally unenforced.
+

@@ -335,6 +335,278 @@ Full contracts are in OpenAPI and [docs/api.md](docs/api.md).
 
 `src/agent` owns typed orchestration and planner adapters; `src/safety` deterministic policy; `src/database` engine-neutral catalog/execution contracts, the SQLite backend, and synthetic-data lifecycle seams; `src/metrics` immutable definitions; `src/statistics` fixed tools; `src/audit` the audit-store contract and SQLite provenance; `src/api` FastAPI; `src/ui` Streamlit; `src/evaluation` benchmarks; `sql` schema/views/indexes/reference queries; `tests` regression and compatibility coverage; `docs` design detail and ADRs. See the [distributed platform foundation](docs/platform_foundation.md).
 
+## Versioned data generation and backend contracts
+
+This milestone changes the inside of dataset construction while deliberately leaving the outside of the application alone. The same seed command still creates the same SQLite fixture, returns the same summary dictionary, and supports the same API, UI, CLI, curated questions, safeguards, and audits. Internally, generation now emits typed logical records in bounded batches, and a separate SQLite loader persists them. A reusable contract suite defines what every future analytical query backend must prove.
+
+```mermaid
+flowchart LR
+ I["Seed, fixture profile, generator version, parameters"]
+ G["Deterministic logical record generator"]
+ B["Typed record batches"]
+ L["SQLite dataset loader"]
+ DB["SQLite compatibility database"]
+ M["Versioned dataset manifest"]
+ Q["Read-only QueryBackend"]
+ A["Bounded analyst workflow"]
+
+ I --> G --> B --> L --> DB
+ I --> M
+ L --> M
+ DB --> Q --> A
+```
+
+### Logical domain records
+
+A logical domain record represents one healthcare concept without saying where it will be stored. `PatientRecord`, for example, has a patient ID, fictional birth date, sex, race/ethnicity, insurance, region, and creation timestamp. It is not a SQLite row object, PostgreSQL command, JSON document, Parquet object, or Spark row. It is a typed description of the synthetic fact that any reviewed writer can consume.
+
+The project has typed records for patients, hospitals, providers, encounters, diagnosis and procedure vocabularies, encounter links, labs, readmissions, and quality measures. The generator yields batches instead of constructing the full 100,000-encounter fixture as one giant list. It retains only the small lookup state needed to preserve the established formulas and build readmissions deterministically.
+
+#### What this means in plain English
+
+Imagine writing a shipping label before deciding whether the package will travel by truck, train, or plane. The address is the same fact regardless of transport. Logical records are the address; SQLite is currently the truck. Later, a PostgreSQL loader or lake writer can carry the same records without inventing a different dataset.
+
+#### What would happen without this layer?
+
+Every storage technology would grow its own copy of the synthetic formulas. A small difference in random-number ordering, null handling, rounding, or eligibility logic could produce different hospital rates for the same seed. Tests would no longer know whether a discrepancy came from storage or from data generation.
+
+### Deterministic, versioned generation
+
+`SyntheticRecordGenerator` owns the existing probability distributions, correlations, controlled missingness, and deliberate quality anomalies. `GENERATOR_VERSION` identifies that formula set. The seed and major parameters still control NumPy's random generator in the same order, so existing row counts and known aggregate results remain stable.
+
+```mermaid
+flowchart TD
+ S["Seed and generation parameters"] --> H["Hospitals and providers"]
+ H --> P["Patient batches"]
+ P --> V["Diagnosis and procedure vocabularies"]
+ V --> E["Encounter plus link and lab batches"]
+ E --> R["Readmission batches"]
+ R --> QM["Quarterly quality-measure batches"]
+ QM --> O["Any approved loader or writer"]
+```
+
+#### What this means in plain English
+
+The seed is a repeatable starting point, while the generator version says which recipe was used. Seed `17` with recipe `1.0.0` and the same fixture size produces the same logical records. If the recipe changes, the version must change even if the seed does not.
+
+#### What would happen without this layer?
+
+A seed by itself would create false confidence. Code changes could alter the dataset while logs continued to say only “seed 17,” making benchmark drift and audit reconstruction difficult to explain.
+
+### Dataset identity
+
+A dataset ID is a deterministic SHA-256-derived identifier computed from canonical generation inputs:
+
+- random seed;
+- fixture profile;
+- generator version;
+- schema version; and
+- major parameters such as patient and encounter counts.
+
+Timestamps and backend names are deliberately excluded. Loading the same logical dataset tomorrow or loading it into another approved store should not change its logical identity.
+
+```python
+dataset_identity(17, "test").dataset_id
+# synthetic-clinical-<stable digest>
+
+dataset_identity(18, "test").dataset_id
+# different digest because the seed changed
+
+dataset_identity(17, "test", encounters=1201).dataset_id
+# different digest because a major parameter changed
+```
+
+#### What this means in plain English
+
+Dataset identity is a reproducible name for the recipe inputs, similar to a fingerprint on a sealed batch. It answers “Are these meant to be the same logical data?” before comparing millions of rows.
+
+#### What would happen without this layer?
+
+Two databases named `clinical.db` could contain different fixtures but appear interchangeable. Conversely, identical logical data loaded at different times could be mistaken for unrelated datasets.
+
+### Dataset manifest
+
+The manifest records both logical identity and the outcome of a specific load. `generate_dataset(...)` exposes it without changing the historical `generate_database(...)` or CLI output.
+
+```json
+{
+  "dataset_id": "synthetic-clinical-<stable digest>",
+  "generator_version": "1.0.0",
+  "schema_version": "1.0",
+  "fixture_profile": "test",
+  "random_seed": 17,
+  "generation_parameters": {"patients": 300, "encounters": 1200, "hospitals": 30, "providers": 200},
+  "entity_row_counts": {"patients": 300, "encounters": 1200, "hospitals": 30},
+  "loader_backend": "sqlite",
+  "load_complete": true,
+  "validation_summary": {"foreign_key_errors": 0, "quality_measure_errors": 0},
+  "source_type": "synthetic",
+  "clinical_use_disclaimer": "Synthetic data only; not for clinical decisions or patient care."
+}
+```
+
+The actual manifest also contains generation/load timestamps, counts for every emitted entity, and stable summaries such as total encounter cost. Timestamps describe a load event but do not affect dataset identity.
+
+#### What this means in plain English
+
+If dataset identity is the batch number, the manifest is the packing slip. It states what was expected, what was loaded, which loader handled it, whether validation passed, and when the work occurred.
+
+#### What would happen without this layer?
+
+A successful process exit would be the only evidence of a good load. Operators could not readily distinguish a complete fixture from one missing labs, links, or quality measures.
+
+### QueryBackend contract
+
+`QueryBackend` is the narrow read-only boundary used by interactive analysis. Its reusable test suite checks catalog normalization, tables and views, prohibited objects, capabilities, read-only enforcement, normalized rows and nulls, numeric types, query plans, execution timing, row truncation, timeout behavior, structured failures, and provenance.
+
+The contract does not allow a backend to approve SQL. Central SQL policy still parses the candidate, rejects unsafe statements, checks schema and complexity, and inserts a row limit before execution. A future PostgreSQL adapter must pass the same shared tests plus its own engine-specific tests.
+
+#### What this means in plain English
+
+A backend is a replaceable database driver with a strict job description. It can describe approved data and run a query that has already received permission. It cannot give itself permission.
+
+#### What would happen without this layer?
+
+Adding PostgreSQL would require database-specific branches throughout the analyst. Safety behavior could accidentally depend on which database was selected, and parity would be tested inconsistently.
+
+### Query execution and dataset loading are separate
+
+The query backend can only read. `SyntheticDatasetLoader` has a different responsibility: create a schema, load typed batches in a transaction, build indexes and views, validate the completed dataset, and return a manifest. The interactive `Analyst` receives the query interface, never the loader.
+
+```mermaid
+flowchart LR
+ GR["Logical record batches"] --> WL["Write-authorized dataset loader"] --> DS["Governed dataset"]
+ SQL["Centrally validated SQL"] --> QR["Read-only query backend"] --> DS
+ DS --> RES["Normalized query result"]
+```
+
+#### What this means in plain English
+
+The employee who stocks a locked archive and the employee who reads approved files have different keys. The analyst gets the reading key. Batch publication gets the stocking key only while loading.
+
+#### What would happen without this layer?
+
+Interactive code would carry write powers it does not need. A future credential or adapter mistake could turn a read-only analytical request into a data mutation path.
+
+### Invariants and compatibility
+
+Invariant tests verify row counts, foreign keys, uniqueness, categorical domains, date rules, numerator/denominator relationships, valid rates, same-seed equivalence, changed-parameter identity changes, and curated-query answers. Backend contract tests are reusable: a future implementation supplies backend and catalog fixtures and inherits the same behavioral checks.
+
+The generator intentionally retains the established rare suspicious discharge-date pattern for quality demonstrations. Small fixtures that do not reach the anomaly interval require ordinary date ordering; larger profiles characterize the deliberate exceptions instead of silently “fixing” them.
+
+#### What this means in plain English
+
+An invariant is a fact that must remain true even while the plumbing changes. We do not merely check that generation finishes; we check that the result still tells the same analytical story and obeys the same integrity rules.
+
+#### What would happen without this layer?
+
+A refactor could produce the right number of rows but attach diagnoses to the wrong encounters, change a rate, lose a null, or alter a curated ranking without an obvious crash.
+
+### Relationship policy remains deliberately disabled
+
+The catalog describes approved join relationships, but the current validator only requires a meaningful join predicate. Tests explicitly show that Cartesian joins are rejected while an unregistered equality join remains accepted. [Relationship-policy characterization](docs/relationship_policy.md) lists the metadata and the intended future contract.
+
+#### What this means in plain English
+
+The application currently checks that two tables are connected with a real condition, but it does not yet prove that the condition is the medically and relationally intended key. That stronger rule is visible on the roadmap, not quietly enabled inside an unrelated refactor.
+
+#### What would happen without this layer?
+
+Silently enabling the list could break existing SQL. Silently ignoring the gap would overstate current safeguards. Characterization tests make both the present behavior and the future change reviewable.
+
+### How this prepares the distributed platform
+
+```mermaid
+flowchart LR
+ SRC["Synthetic or future source batch"] --> RAW["Raw: immutable source"]
+ RAW --> BR["Bronze: ingested plus batch metadata"]
+ BR --> SI["Silver: typed, cleaned, deduplicated, validated"]
+ SI --> GO["Gold: analytics-ready governed metrics"]
+ GO --> PG["Future PostgreSQL serving"]
+ GO --> SQ["SQLite compatibility fixture"]
+ PG --> QA["Validated interactive analysis"]
+ SQ --> QA
+```
+
+PostgreSQL will later add production-style serving, using separate SELECT-only and loading credentials. The same logical batches can also be serialized as raw JSON/CSV, Parquet, or Spark DataFrames. Raw preserves the immutable source; bronze adds ingestion metadata; silver applies deterministic typing, cleanup, deduplication, and validation; gold exposes reviewed analytical tables and registered metric materializations.
+
+PySpark will run reviewed transformation code over versioned records. It will not execute arbitrary model-generated Python or Spark expressions. Airflow will schedule ingestion, transformations, quality gates, publication, and benchmarks; it will not handle latency-sensitive `/analyze` requests. Kubernetes remains last because deployment orchestration is useful only after service boundaries, state, health checks, idempotency, resource requirements, and operational ownership are established.
+
+#### What this means in plain English
+
+The project is preparing standardized boxes, labels, and inspection rules before buying a larger warehouse and delivery fleet. PostgreSQL, Spark, Airflow, and Kubernetes will later fill specific roles; none should redefine the data or weaken permission checks.
+
+#### What would happen without this layer?
+
+Infrastructure would arrive before its responsibilities were clear. The result would be more moving parts, duplicated rules, difficult debugging, and no reliable proof that a final answer came from the intended source batch.
+
+### End-to-end provenance direction
+
+The intended lineage is:
+
+```text
+source batch
+  → versioned logical records
+  → loader and load manifest
+  → database or gold snapshot
+  → centrally validated SQL
+  → verified rows and approved statistics
+  → evidence-grounded answer and audit record
+```
+
+Execution context already has internal dataset, snapshot, fixture-profile, and generator-version fields. The current public response remains unchanged. Later milestones can persist manifest references and snapshot identity in audit storage through an additive, versioned migration.
+
+#### What this means in plain English
+
+Provenance is the chain of receipts behind an answer. A reviewer should eventually be able to move backward from a sentence in the UI to the query, database snapshot, load event, transformation version, and original source batch.
+
+#### What would happen without this layer?
+
+An answer might be numerically plausible but impossible to reproduce after data refreshes or code changes.
+
+### Tradeoffs and current limitations
+
+- SQLite is still the only implementation; portability is proven by contracts and logical inputs, not yet by a second engine.
+- Dataset identity hashes generation inputs and relies on disciplined generator-version changes; it does not hash every row.
+- Manifests are returned programmatically but are not yet written to an external registry or audit table.
+- The generator streams large fact batches but retains compact primary-diagnosis and inpatient eligibility state for readmission generation.
+- Backend errors are structured internally; the public API retains its existing safe failure response.
+- Relationship metadata remains descriptive until a separately reviewed enforcement milestone.
+- The synthetic anomaly schedule remains part of compatibility and must not be interpreted as valid clinical data.
+
+### Beginner-friendly setup and verification
+
+No paid service or infrastructure platform is required:
+
+```bash
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+python -m pip install -e ".[dev]"
+
+# Small local fixture through the unchanged command
+python -m src.database.seed --patients 300 --encounters 1200 --seed 17
+
+# Regression and reusable backend contracts
+python -m pytest
+
+# Coverage and deterministic benchmark
+python -m pytest --cov=src --cov-report=term-missing
+python -m src.cli benchmark --limit 5
+```
+
+To inspect a manifest without changing the CLI contract:
+
+```python
+from pathlib import Path
+from src.database.seed import generate_dataset
+
+result = generate_dataset(Path("data/generated/clinical.db"), seed=17, patients=300, encounters=1200)
+print(result.manifest.model_dump_json(indent=2))
+```
+
+The generated database remains synthetic and must never be replaced with PHI.
+
 ## Design decisions, limits, and production hardening
 
 SQLite makes the demo portable and inspectable; PostgreSQL should use a dedicated SELECT-only role and statement timeout. Curated SQL makes credential-free behavior reproducible. SQLGlot provides structural checks that regex cannot, though policy remains conservative. FastAPI supplies typed service contracts while Streamlit optimizes portfolio exploration.
