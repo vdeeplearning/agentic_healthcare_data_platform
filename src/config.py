@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     postgres_schema: str = "public"
     postgres_storage_identity: str = "postgres:public"
     metadata_path: Path | None = None
+    lake_root: Path = Path("data/lake")
     demo_mode: bool = True
     seed: int = 42
     query_timeout_seconds: float = 5.0

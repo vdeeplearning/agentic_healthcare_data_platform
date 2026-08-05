@@ -7,6 +7,7 @@ htmlcov/
 venv/
 .env
 data/generated/*.db*
+data/lake/
 *.log
 *.egg-info/
 .streamlit/secrets.toml
