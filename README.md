@@ -1117,6 +1117,381 @@ Spark will later transform registered inputs into registered outputs using deter
 
 PostgreSQL is the future store counter where polished products can be served. The next milestone designs the warehouse shelves and quality stages. Spark may later move and process boxes; it does not decide what is safe to sell.
 
+## Project evolution: from bounded analyst to versioned data platform
+
+The project now has two independently useful boundaries. The application boundary authorizes bounded analysis against either SQLite or PostgreSQL. The new data boundary moves the same logical synthetic records through raw, bronze, silver, and gold snapshots before loading an analytical serving database. Existing API, UI, seed, safety, privacy, metrics, statistics, audit, and benchmark behavior remains compatible.
+
+```mermaid
+timeline
+ title Project release evolution
+ section Completed
+  Bounded analyst : deterministic safeguards and SQLite
+  Platform seams : query backends, logical records, manifests, snapshots
+  Dual serving : optional PostgreSQL and parity contracts
+  Local lake : raw, bronze, silver, gold, quality gates, lineage
+ section Future
+  Distributed transforms : PySpark contract implementation
+  Scheduling : Airflow orchestration
+  Operations : Kubernetes deployment
+```
+
+### What this means in plain English
+
+The original analyst answered governed questions from one dependable local database. It can now receive a shipment of source data, preserve the unopened shipment, clean and validate successive copies, publish an approved analytical edition, and serve that edition from either of two databases.
+
+## Actual live PostgreSQL verification results
+
+The required startup command was identified and attempted on August 5, 2026:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d --build
+```
+
+Compose configuration validation passed, and Docker CLI 29.4.1 was installed. Live startup did **not** succeed. The Docker API pipe `npipe:////./pipe/docker_engine` did not exist because `com.docker.service` was stopped. A direct service-start attempt failed with `Cannot open com.docker.service service on computer '.'`; the process also lacked permission to read `C:\Users\tommy\.docker\config.json`. Therefore no claim of live PostgreSQL health, fixture loading, API smoke testing, benchmark timing, or parity is made from this environment.
+
+The psycopg orchestration tests pass without a server. The live suite remains opt-in and now includes the reusable backend contract, loader, identities, curated analytical parity, and a seven-question machine-readable report. When Docker Desktop is running:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d --build
+$env:CLINICAL_SQL_TEST_POSTGRES_DSN="postgresql://clinical_loader:synthetic-local-only@localhost:5432/clinical"
+python -m pytest tests/test_postgres_integration.py -v
+```
+
+Inspect health and logs with:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml ps
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml logs postgres postgres-seed api
+```
+
+The current Compose demo role owns the synthetic schema. Query execution still starts a read-only transaction and the live contract attempts mutations to prove enforcement. Production must use a separate schema-owning loader role and a SELECT-only application role.
+
+### What this means in plain English
+
+The PostgreSQL vehicle and its road test are built, but the garage door could not be opened on this machine. Mock and configuration checks succeeded; the README deliberately does not relabel them as a live drive.
+
+## Current dual-backend application architecture
+
+```mermaid
+flowchart TD
+ UI["Unchanged FastAPI and Streamlit contracts"] --> AG["Bounded analyst workflow"]
+ AG --> AU["SQL, privacy, metric, and statistics authorization"]
+ AU --> QB{"Configured query backend"}
+ QB --> SQ["SQLite compatibility serving snapshot"]
+ QB --> PG["Optional PostgreSQL serving snapshot"]
+ SQ --> EV["Normalized evidence"]
+ PG --> EV
+ EV --> AN["Grounded answer and audit"]
+```
+
+Switching remains configuration-only:
+
+```env
+DATABASE_BACKEND=sqlite
+```
+
+or:
+
+```env
+DATABASE_BACKEND=postgres
+POSTGRES_DSN=postgresql://user:password@host:5432/clinical
+CLINICAL_SQL_POSTGRES_SCHEMA=public
+CLINICAL_SQL_METADATA_PATH=data/generated/postgres.metadata.db
+```
+
+### What this means in plain English
+
+The same application logic, safeguards, and logical dataset work against two different databases. The database driver changes; the authorization checkpoint does not.
+
+## What a data lake is
+
+A data lake is durable storage for data at several stages of readiness. Unlike the analytical serving database, it keeps source-shaped evidence and intermediate versions rather than only the final query-friendly tables. This implementation is deliberately small: canonical JSON Lines files, typed metadata, checksums, and atomic local publication.
+
+### What this means in plain English
+
+Think of the lake as a set of labeled archive shelves. The raw shelf keeps the envelope exactly as delivered. Bronze opens and reads it. Silver corrects and checks a working copy. Gold holds the approved tables used for analysis.
+
+## Why raw, bronze, silver, and gold layers exist
+
+```mermaid
+flowchart LR
+ GEN["Logical synthetic records"] --> BATCH["Source batch"]
+ BATCH --> RAW["Raw: immutable received bytes"]
+ RAW --> BR["Bronze: parsed records plus errors"]
+ BR --> SI["Silver: cleaned, deduplicated, validated"]
+ SI --> GO["Gold: analytics-ready governed tables"]
+ GO --> SERVE["SQLite or PostgreSQL serving snapshot"]
+ SERVE --> AGENT["Bounded SQL agent"]
+```
+
+### What happens in each layer
+
+- **Raw** stores immutable JSON Lines objects, source identity, generator version, parameters, row counts, timestamps, and SHA-256 checksums. Malformed source bytes are preserved.
+- **Bronze** parses each row and records parse failures. It does not silently discard problems or claim that malformed input is clean.
+- **Silver** applies explicit entity keys, removes duplicate or invalid identifiers, checks categorical domains and references, and records rejected counts.
+- **Gold** verifies required analytical entities, registered rate bounds, numerator/denominator consistency, and the synthetic-identifier policy before publication.
+
+### What would happen without each layer
+
+- Without raw, a correction could erase evidence of what arrived.
+- Without bronze, parsing failures would be mixed with business-quality failures.
+- Without silver, every metric would repeatedly clean identifiers, categories, and references differently.
+- Without gold, serving databases could receive tables that are technically parseable but analytically unsafe.
+
+### What this means in plain English
+
+A malformed date enters raw unchanged. Bronze reports that it cannot parse the row. Silver never receives a falsely “fixed” value; after a reviewed correction arrives in a new batch, silver can standardize it. Gold excludes rejected data from registered rates. An audit can still point back to the original source batch.
+
+## Source batches and immutable raw data
+
+A `SourceBatch` identifies the source system, dataset, fixture profile, generator version, parameters, source objects, checksums, counts, disclaimer, and optional parent batch. The CLI supports initial, incremental, and intentionally malformed batches. Raw objects are content-addressed and immutable: the same identifier plus the same bytes is idempotent; conflicting bytes are rejected.
+
+```mermaid
+flowchart LR
+ SS["Source system"] --> SB["Source batch"]
+ SB --> O1["patients.jsonl + checksum"]
+ SB --> O2["encounters.jsonl + checksum"]
+ SB --> ON["other entity objects + checksums"]
+ O1 --> RM["Raw manifest"]
+ O2 --> RM
+ ON --> RM
+```
+
+### What this means in plain English
+
+If a sender later corrects a file, the platform creates a new batch instead of quietly replacing history. “What did we receive?” remains answerable.
+
+## Transformation versions and deterministic execution
+
+`source-to-raw`, `raw-to-bronze`, `bronze-to-silver`, and `silver-to-gold` each have a version. Snapshot identity includes the transformation version, parent, object checksums, and validation evidence. Identical inputs and versions produce identical identifiers. Changing a version produces a different manifest even if rows happen to match.
+
+The implementation uses reviewed ordinary Python. An LLM cannot select, rewrite, or execute transformation code. The invariant remains: **the AI proposes; deterministic software authorizes, executes, verifies, suppresses, and audits.**
+
+### What this means in plain English
+
+The recipe number is printed on every output. Re-running recipe 1.0 on the same ingredients gives the same labeled product. Recipe 2.0 gets a new label even when a small test happens to taste the same.
+
+## Candidate versus published snapshots
+
+Objects are first written through a staging directory. A candidate manifest is registered, deterministic quality checks run, and only a validated candidate atomically replaces the active pointer. Published files are never assembled piece by piece in front of readers.
+
+```mermaid
+flowchart TD
+ IN["Active parent snapshot"] --> ST["Write candidate objects in staging"]
+ ST --> CM["Register candidate manifest"]
+ CM --> Q{"Quality gates pass?"}
+ Q -->|yes| AT["Atomic active-pointer replacement"]
+ AT --> NEW["New active snapshot"]
+ Q -->|no| FAIL["Failed run and diagnostics"]
+```
+
+### Why failed data must not replace validated data
+
+```mermaid
+flowchart LR
+ OLD["Previously active validated bronze"] --> READ["Readers continue using it"]
+ BAD["Malformed raw candidate"] --> GATE["Bronze parse gate fails"]
+ GATE --> DIAG["Rejected rows and warnings retained"]
+ GATE -. "no activation" .-> READ
+```
+
+A failed run has a manifest and diagnostics but no active snapshot. The prior active snapshot remains selected. Privacy and SQL safeguards are downstream controls and are never weakened to make a data candidate pass.
+
+### What this means in plain English
+
+The new edition is printed and inspected backstage. If pages are missing, the bookstore keeps selling the last approved edition and retains the inspection report.
+
+## Local filesystem lake architecture
+
+`LakeStore` defines object reads/writes/listing, existence and checksum validation, manifest registration and lookup, snapshot publication, and parent traversal. `LocalFilesystemLakeStore` is the only implementation. It rejects absolute paths and `..`, uses deterministic repository-relative object names, writes temporary files followed by atomic rename, separates staging, and exposes no absolute path through its models.
+
+Generated lake contents live under `data/lake/` by default and are ignored by Git. Tests always use temporary roots.
+
+### Why local storage is used before cloud object storage
+
+Local files prove semantics without cloud credentials, network failures, SDKs, billing, or vendor policy. A future object-store implementation must preserve the same content checksums, immutable raw writes, conditional publication, and manifest contract.
+
+### What this means in plain English
+
+Before renting a warehouse, the project proves its labeling, inventory, and inspection process in a controlled room.
+
+## How gold loads into SQLite and PostgreSQL
+
+The serving adapter reads only a validated active gold snapshot, reconstructs the existing typed logical record batches, and invokes the existing transactional loaders. The logical dataset and manifest identity remain stable; the storage identity, backend, and gold parent create a distinct serving snapshot.
+
+```mermaid
+flowchart LR
+ GO["Validated active gold snapshot"] --> LR["Existing logical record batches"]
+ LR --> SL["Transactional SQLite loader"]
+ LR --> PL["Transactional PostgreSQL loader"]
+ SL --> SS["SQLite serving snapshot + gold parent"]
+ PL --> PS["PostgreSQL serving snapshot + gold parent"]
+ SS --> SQL["Authorized SQL"]
+ PS --> SQL
+```
+
+### What this means in plain English
+
+Gold is the approved manuscript. SQLite and PostgreSQL are two editions printed from it. Each edition has its own inventory ID but points to the same approved manuscript and source history.
+
+## Complete lineage from source object to final answer
+
+```mermaid
+flowchart RL
+ ANSWER["Evidence-grounded answer"] --> AUDIT["Analysis audit and validated SQL"]
+ AUDIT --> DB["Serving database snapshot"]
+ DB --> GOLD["Gold snapshot"]
+ GOLD --> SILVER["Silver snapshot"]
+ SILVER --> BRONZE["Bronze snapshot"]
+ BRONZE --> RAW["Raw snapshot"]
+ RAW --> BATCH["Source batch"]
+ BATCH --> OBJECTS["Immutable source objects and checksums"]
+```
+
+`LineageResolver` can optionally receive the lake store. It resolves an analysis run to its serving snapshot, reads `gold_snapshot_id`, and traverses deterministic parent links to raw. Transformation name, version, checksums, validation, and source identity are platform metadata—not model prose. Placeholder orchestration and distributed-job IDs remain null.
+
+### What this means in plain English
+
+When an answer says “300 patients,” the platform can identify the SQL run, database copy, gold tables, every cleaning stage, source batch, and exact checksummed source objects behind that number.
+
+## Beginner-friendly local pipeline walkthrough
+
+Use a small test profile and an isolated lake directory:
+
+```powershell
+python -m src.lake.cli --root data/lake generate-source --profile test --seed 17
+python -m src.lake.cli --root data/lake publish-raw --batch-id <batch-id>
+python -m src.lake.cli --root data/lake transform --input-snapshot-id <raw-snapshot-id> --to bronze
+python -m src.lake.cli --root data/lake transform --input-snapshot-id <bronze-snapshot-id> --to silver
+python -m src.lake.cli --root data/lake transform --input-snapshot-id <silver-snapshot-id> --to gold
+python -m src.lake.cli --root data/lake validate --manifest-id <gold-manifest-id>
+python -m src.lake.cli --root data/lake publish-sqlite --gold-snapshot-id <gold-snapshot-id> --path data/generated/lake-serving.db
+python -m src.lake.cli --root data/lake lineage --snapshot-id <gold-snapshot-id>
+```
+
+The convenience command performs the same visible stages:
+
+```powershell
+python -m src.lake.cli --root data/lake run-pipeline --profile test --seed 17
+python -m src.lake.cli --root data/lake list --layer gold
+```
+
+PostgreSQL publication is explicit:
+
+```powershell
+python -m src.lake.cli --root data/lake publish-postgres --gold-snapshot-id <gold-snapshot-id> --metadata-path data/generated/postgres.metadata.db
+```
+
+Create quality-gate fixtures with `generate-source --malformed`. Create a related batch with `--kind incremental --parent-batch-id <batch-id>`. These commands never change the historical `python -m src.database.seed` behavior.
+
+### What this means in plain English
+
+Each command is one inspectable factory station. `run-pipeline` is a shortcut, not a hidden alternative process.
+
+## Why Spark is not included yet
+
+Spark solves distributed computation; it should not decide what raw, bronze, silver, gold, validation, or publication mean. This milestone first freezes those contracts with small deterministic Python.
+
+```mermaid
+flowchart LR
+ CONTRACTS["Existing layer and validation contracts"] --> LOCAL["Current local Python implementation"]
+ CONTRACTS --> SPARK["Future PySpark implementation"]
+ LOCAL --> PARITY["Same-input parity suite"]
+ SPARK --> PARITY
+ PARITY --> PUBLISH["Only validated equivalent outputs publish"]
+```
+
+The recommended next milestone is PySpark integration implementing these exact three transformation boundaries. Local Python remains the compatibility fixture.
+
+### What this means in plain English
+
+The project wrote and tested the recipe before buying industrial kitchen equipment. Spark can later cook larger batches without changing the recipe or inspection form.
+
+## Why Airflow is not included yet
+
+Airflow schedules known work; it should not define transformation rules. Once local and PySpark implementations satisfy the same contracts, Airflow can call them, retry operational failures, and record its run ID in the existing optional field.
+
+```mermaid
+flowchart TD
+ AF["Future Airflow schedule"] --> R["Generate/register raw batch"]
+ R --> B["Invoke reviewed bronze transform"]
+ B --> S["Invoke reviewed silver transform"]
+ S --> G["Invoke reviewed gold transform"]
+ G --> P["Publish serving snapshot after gates"]
+```
+
+### What this means in plain English
+
+Airflow will become the timetable and dispatcher. It will not rewrite the trains or decide whether unsafe cargo passes inspection.
+
+## Why Kubernetes remains last
+
+Kubernetes operates multiple mature services. It is useful after storage, processing, scheduling, health, secrets, resources, and ownership boundaries exist.
+
+```mermaid
+flowchart TD
+ K["Future Kubernetes cluster"] --> API["Stateless API replicas"]
+ K --> UI["UI service"]
+ K --> AF["Airflow components"]
+ K --> SP["Spark operator/workers"]
+ API --> PG["Managed PostgreSQL serving"]
+ AF --> OBJ["Object storage lake"]
+ SP --> OBJ
+```
+
+This is a future topology, not code or deployment added by this release.
+
+### What this means in plain English
+
+Kubernetes is the building manager. The project first defines the rooms, machines, schedules, and safety procedures that the manager will operate.
+
+## Verification, parity, and benchmark results
+
+The final local run produced:
+
+- **146 passed, 13 skipped**, with every skip requiring the unavailable live PostgreSQL DSN;
+- **93.45% coverage**, above the 92% gate and the prior 92.19% baseline;
+- successful compilation of `src` and `tests`;
+- valid original and PostgreSQL-overlay Compose configurations;
+- test lake profile: 300 patients and 1,200 encounters, validated through gold and published to SQLite;
+- demo lake profile: 2,500 patients and 10,000 encounters, validated through gold;
+- resolved serving lineage layers: gold → silver → bronze → raw;
+- eight benchmark cases with 100% table-selection accuracy, 100% clarification accuracy, and 100% unsafe-query rejection.
+
+The suite covers deterministic reruns, version-sensitive identities, path traversal, atomic writes, raw immutability, checksums, serialization, manifest conflicts, all three transforms, composite-key preservation, quality-gate failure, prior-active preservation, gold-to-SQLite and mocked-loader PostgreSQL publication boundaries, and analysis-audit-to-raw lineage.
+
+The PostgreSQL parity report contains query ID, question, both statuses, exact normalized result equality, numeric tolerance, warning equality, answer equality or explanation, both timings, snapshot IDs, dataset ID, and manifest ID. It covers aggregation, CTE/rate logic, multi-table joins, privacy/cohort behavior, statistics, clarification, and denial. It is generated only during a live run; no fabricated report is committed.
+
+Performance comparisons require equivalent snapshots, cache-state labels, server configuration, and network context. Local SQLite and an unavailable Docker daemon cannot produce a meaningful database speed comparison.
+
+## Troubleshooting
+
+- **Docker pipe missing:** start Docker Desktop, confirm `docker version` shows a Server section, then rerun Compose.
+- **Cannot open Docker service:** use an account allowed to start Docker Desktop or start it interactively; this repository cannot bypass Windows service policy.
+- **PostgreSQL test skipped:** set `CLINICAL_SQL_TEST_POSTGRES_DSN` and confirm the database accepts connections.
+- **PostgreSQL schema permission error:** use a dedicated empty schema owned by the loader role.
+- **Unsafe lake path:** pass a configured root and platform-generated identifiers; absolute paths and `..` are rejected inside object metadata.
+- **Checksum failure:** do not edit published objects. Register a corrected source batch.
+- **Bronze gate fails:** inspect warnings and rejected-row counts; raw remains preserved.
+- **Candidate did not activate:** inspect its `ValidationResult`; the previous active snapshot is intentionally retained.
+- **PostgreSQL publication missing DSN:** pass `--dsn` or set `POSTGRES_DSN`.
+
+## Tradeoffs, limitations, and production-hardening roadmap
+
+- JSON Lines is transparent and dependency-free but larger and slower than Parquet.
+- Local atomic rename is not a distributed transaction and assumes one controlled filesystem.
+- The current source adapter is synthetic; real ingestion authorization and PHI controls remain future work.
+- Silver checks are intentionally focused on this fixture, not a generic enterprise quality framework.
+- Retention and garbage collection are manual.
+- PostgreSQL live results remain blocked until Docker or a DSN is available.
+- No Spark, Airflow, Kubernetes, cloud SDK, object-storage server, table format, or relationship-policy enforcement was added.
+
+Production hardening should add an object-store adapter with conditional writes and encryption; Parquet after a dependency/format ADR; identity and access controls; PHI classification; tamper-evident metadata; retention; observability; live PostgreSQL roles/TLS/pooling; and disaster recovery. PySpark is next. Airflow follows stable Spark jobs. Kubernetes remains last.
+
+### What this means in plain English
+
+This release proves the chain of custody and quality process on one machine. It does not pretend that a local folder is a globally durable production lake.
+
 ## Design decisions, limits, and production hardening
 
 SQLite makes the demo portable and inspectable; PostgreSQL should use a dedicated SELECT-only role and statement timeout. Curated SQL makes credential-free behavior reproducible. SQLGlot provides structural checks that regex cannot, though policy remains conservative. FastAPI supplies typed service contracts while Streamlit optimizes portfolio exploration.
