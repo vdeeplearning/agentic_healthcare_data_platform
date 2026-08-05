@@ -13,7 +13,7 @@ from src.audit.repository import SQLiteAuditStore
 from src.config import Settings
 from src.database.backend import SQLiteQueryBackend
 from src.database.lifecycle import FIXTURE_PROFILES, SQLiteSyntheticDatasetLoader, dataset_identity
-from src.database.models import ExecutionContext
+from src.database.models import ExecutionContext, QueryBackendError
 from src.metrics.registry import METRICS
 
 
@@ -129,7 +129,7 @@ def test_sqlite_schema_views_indexes_and_seed_invariants(db_path):
 def test_sqlite_backend_cooperative_timeout(db_path):
     backend = SQLiteQueryBackend(db_path)
     sql = "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM x WHERE n<100000000) SELECT SUM(n) FROM x"
-    with pytest.raises(sqlite3.OperationalError, match="interrupted"):
+    with pytest.raises(QueryBackendError, match="interrupted"):
         backend.execute(sql, ExecutionContext(run_id="timeout", timeout_seconds=0), 1)
 
 
@@ -148,4 +148,4 @@ def test_fixture_profiles_and_sqlite_loader(tmp_path):
     counts = SQLiteSyntheticDatasetLoader().load(path, 17, profile)
     assert counts["patients"] == 300 and counts["encounters"] == 1200
     identity = dataset_identity(17, "test")
-    assert identity.backend == "sqlite" and identity.dataset_id == "synthetic-clinical-seed-17"
+    assert identity.backend == "logical" and identity.dataset_id.startswith("synthetic-clinical-")

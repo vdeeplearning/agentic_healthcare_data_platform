@@ -7,6 +7,7 @@ from src.agent.schemas import AnalysisPlan,AnalysisResponse,TraceEvent,Validatio
 from src.audit.repository import AuditStore,SQLiteAuditStore
 from src.database.backend import QueryBackend,SQLiteQueryBackend
 from src.database.models import ExecutionContext
+from src.database.lifecycle import DatasetIdentity
 from src.demo.curated_questions import curated
 from src.agent.live_planner import generate_live_proposal
 from src.agent.planner import ExistingPlanner,Planner
@@ -19,12 +20,13 @@ from src.statistics.tools import run_statistical_tool
 
 class Analyst:
     """Orchestrates an allowlisted, bounded query pipeline."""
-    def __init__(self,db_path:Path,max_rows:int=1000,timeout_seconds:float=5,small_cell_threshold:int=10,model:str="gpt-5.6-sol",*,query_backend:QueryBackend|None=None,audit_store:AuditStore|None=None,planner:Planner|None=None):
+    def __init__(self,db_path:Path,max_rows:int=1000,timeout_seconds:float=5,small_cell_threshold:int=10,model:str="gpt-5.6-sol",*,query_backend:QueryBackend|None=None,audit_store:AuditStore|None=None,planner:Planner|None=None,dataset_identity:DatasetIdentity|None=None):
         self.db_path=Path(db_path); self.max_rows=max_rows; self.timeout_seconds=timeout_seconds; self.small_cell_threshold=small_cell_threshold; self.model=model
         self.query_backend=query_backend or SQLiteQueryBackend(self.db_path)
         self._uses_default_audit_store=audit_store is None
         self.audit_store=audit_store or SQLiteAuditStore(self.db_path)
         self.planner=planner or ExistingPlanner(self.db_path,curated,generate_live_proposal)
+        self.dataset_identity=dataset_identity
     def analyze(self,question:str,api_key:str|None=None,conversation_context:list[dict[str,Any]]|None=None)->AnalysisResponse:
         run_id=str(uuid.uuid4()); trace=[]; warnings=injection_warnings(question); risk,risk_warnings=classify_risk(question); warnings+=risk_warnings
         trace.append(TraceEvent(step="normalize_question",status="ok",detail="Whitespace and casing normalized for classification."))
@@ -68,7 +70,8 @@ class Analyst:
         if not validation.valid: return self._finish(run_id,question,"failed","SQL validation failed safely.",plan,sql,[],warnings,trace,validation)
         sql=validation.sql or sql
         try:
-            execution=self.query_backend.execute(sql,ExecutionContext(run_id=run_id,correlation_id=run_id,timeout_seconds=self.timeout_seconds,dataset_id="synthetic-clinical"),self.max_rows)
+            identity=self.dataset_identity
+            execution=self.query_backend.execute(sql,ExecutionContext(run_id=run_id,correlation_id=run_id,timeout_seconds=self.timeout_seconds,dataset_id=identity.dataset_id if identity else "synthetic-clinical",fixture_profile=identity.profile if identity else None,generator_version=identity.generator_version if identity else None),self.max_rows)
         except Exception as exc:
             trace.append(TraceEvent(step="execute_query",status="blocked",detail=str(exc))); return self._finish(run_id,question,"failed","Query execution failed safely.",plan,sql,[],warnings,trace,validation)
         rows=execution.rows; query_plan=execution.query_plan; elapsed=execution.execution_time_ms

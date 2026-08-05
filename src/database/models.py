@@ -54,6 +54,8 @@ class ExecutionContext(BaseModel):
     tenant_id: str | None = None
     dataset_id: str | None = None
     snapshot_id: str | None = None
+    fixture_profile: str | None = None
+    generator_version: str | None = None
 
 
 class QueryExecutionResult(BaseModel):
@@ -64,3 +66,13 @@ class QueryExecutionResult(BaseModel):
     truncated: bool = False
     backend_name: str
     provenance: dict[str, Any] = Field(default_factory=dict)
+
+
+class QueryBackendError(RuntimeError):
+    """Structured backend failure whose message preserves legacy trace detail."""
+
+    def __init__(self, message: str, *, backend_name: str, code: str = "execution_failed", retryable: bool = False):
+        super().__init__(message)
+        self.backend_name = backend_name
+        self.code = code
+        self.retryable = retryable
