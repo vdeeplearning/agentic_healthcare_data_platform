@@ -9,6 +9,7 @@ jobs:
         with: {python-version: "3.11", cache: pip}
       - run: pip install -e ".[dev]"
       - run: python -m src.database.seed --patients 500 --encounters 2000
+      - run: python scripts/validate_kubernetes.py
       - run: pytest --cov=src --cov-report=term-missing
       - run: python -m src.cli benchmark --limit 5
 

@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-webserver
+  namespace: agentic-healthcare
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: airflow-webserver}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: airflow-webserver, app.kubernetes.io/part-of: agentic-healthcare-data-platform}
+    spec:
+      terminationGracePeriodSeconds: 60
+      initContainers:
+        - name: migrate-metadata
+          image: ghcr.io/vdeeplearning/agentic_healthcare_data_platform-airflow:0.1.0
+          imagePullPolicy: IfNotPresent
+          command: [airflow, db, migrate]
+          envFrom:
+            - {configMapRef: {name: platform-config}}
+            - {secretRef: {name: platform-secrets}}
+      containers:
+        - name: webserver
+          image: ghcr.io/vdeeplearning/agentic_healthcare_data_platform-airflow:0.1.0
+          imagePullPolicy: IfNotPresent
+          command: [airflow, webserver]
+          ports: [{name: http, containerPort: 8080}]
+          envFrom:
+            - {configMapRef: {name: platform-config}}
+            - {secretRef: {name: platform-secrets}}
+          startupProbe: &webProbe
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe: *webProbe
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 30
+            timeoutSeconds: 10
+          lifecycle:
+            preStop: {exec: {command: [sh, -c, "kill -TERM 1"]}}
+          resources:
+            requests: {cpu: 250m, memory: 1Gi}
+            limits: {cpu: "1", memory: 2Gi}
+          volumeMounts: [{name: logs, mountPath: /opt/airflow/logs}]
+      volumes:
+        - {name: logs, persistentVolumeClaim: {claimName: airflow-logs}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow-webserver
+  namespace: agentic-healthcare
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: airflow-webserver}
+  ports: [{name: http, port: 8080, targetPort: http}]
+

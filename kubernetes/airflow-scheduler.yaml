@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-scheduler
+  namespace: agentic-healthcare
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: airflow-scheduler}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: airflow-scheduler, app.kubernetes.io/part-of: agentic-healthcare-data-platform}
+    spec:
+      terminationGracePeriodSeconds: 60
+      initContainers:
+        - name: migrate-metadata
+          image: ghcr.io/vdeeplearning/agentic_healthcare_data_platform-airflow:0.1.0
+          imagePullPolicy: IfNotPresent
+          command: [airflow, db, migrate]
+          envFrom:
+            - {configMapRef: {name: platform-config}}
+            - {secretRef: {name: platform-secrets}}
+      containers:
+        - name: scheduler
+          image: ghcr.io/vdeeplearning/agentic_healthcare_data_platform-airflow:0.1.0
+          imagePullPolicy: IfNotPresent
+          command: [airflow, scheduler]
+          envFrom:
+            - {configMapRef: {name: platform-config}}
+            - {secretRef: {name: platform-secrets}}
+          startupProbe: &schedulerProbe
+            exec: {command: [airflow, jobs, check, --job-type, SchedulerJob, --local]}
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe: *schedulerProbe
+          livenessProbe:
+            exec: {command: [airflow, jobs, check, --job-type, SchedulerJob, --local]}
+            periodSeconds: 30
+            timeoutSeconds: 10
+          resources:
+            requests: {cpu: 500m, memory: 1Gi}
+            limits: {cpu: "2", memory: 2Gi}
+          volumeMounts:
+            - {name: lake, mountPath: /app/data/lake}
+            - {name: metadata, mountPath: /app/data/metadata}
+            - {name: audit, mountPath: /app/data/audit}
+            - {name: logs, mountPath: /opt/airflow/logs}
+      volumes:
+        - {name: lake, persistentVolumeClaim: {claimName: lake-data}}
+        - {name: metadata, persistentVolumeClaim: {claimName: platform-metadata}}
+        - {name: audit, persistentVolumeClaim: {claimName: audit-data}}
+        - {name: logs, persistentVolumeClaim: {claimName: airflow-logs}}
+

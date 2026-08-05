@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+  namespace: agentic-healthcare
+data:
+  CLINICAL_SQL_DATABASE_BACKEND: "sqlite"
+  CLINICAL_SQL_DB_PATH: /app/data/audit/clinical.db
+  CLINICAL_SQL_METADATA_PATH: /app/data/metadata/platform.metadata.db
+  CLINICAL_SQL_LAKE_ROOT: /app/data/lake
+  CLINICAL_SQL_LAKE_TRANSFORM_ENGINE: "python"
+  CLINICAL_SQL_POSTGRES_SCHEMA: public
+  CLINICAL_SQL_POSTGRES_STORAGE_IDENTITY: postgres:public
+  CLINICAL_SQL_SPARK_MASTER: "local[*]"
+  CLINICAL_SQL_SPARK_SHUFFLE_PARTITIONS: "4"
+  CLINICAL_SQL_SPARK_LOG_LEVEL: WARN
+  CLINICAL_SQL_AIRFLOW_DAG_ID: clinical_lake_pipeline
+  CLINICAL_SQL_AIRFLOW_SCHEDULE: "@daily"
+  CLINICAL_SQL_AIRFLOW_RETRIES: "2"
+  CLINICAL_SQL_AIRFLOW_RETRY_DELAY_SECONDS: "300"
+  CLINICAL_SQL_AIRFLOW_SERVING_PATH: /app/data/audit/airflow-serving.db
+  CLINICAL_SQL_OPENAI_MODEL: gpt-5.6-sol
+  CLINICAL_SQL_DEMO_MODE: "true"
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/platform/dags
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+  AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+  AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+  AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
+  AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+
