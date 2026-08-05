@@ -1449,8 +1449,8 @@ Kubernetes is the building manager. The project first defines the rooms, machine
 
 The final local run produced:
 
-- **156 passed, 16 skipped**: 13 require the unavailable live PostgreSQL DSN and 3 require a real Java/PySpark runtime;
-- **92.97% coverage**, above the 92% gate;
+- **166 passed, 17 skipped**: 13 require the unavailable live PostgreSQL DSN, 3 require a real Java/PySpark runtime, and 1 requires the optional Airflow package;
+- **92.92% coverage**, above the 92% gate;
 - successful compilation of `src` and `tests`;
 - valid original and PostgreSQL-overlay Compose configurations;
 - test lake profile: 300 patients and 1,200 encounters, validated through gold and published to SQLite;
@@ -1891,6 +1891,346 @@ No Airflow dependency, DAG, Kubernetes manifest, Spark operator, cloud SDK, Kafk
 - PostgreSQL live publication still requires a server.
 
 Production hardening should next add Airflow orchestration only after real Spark parity passes. Later work should add distributed logical hashing, object storage with conditional publication, external metadata, encryption and access policy, Spark event/metrics capture, cluster submission, resource testing, and operational recovery. Kubernetes remains after those boundaries exist.
+
+## Optional Apache Airflow orchestration
+
+### What changed in this milestone
+
+The platform now has an optional Airflow DAG that coordinates the existing source generator, Python or Spark transformation engine, shared quality gates, atomic lake publication, serving loaders, verification analysis, audit, and lineage. Airflow schedules and retries these contracts; it does not implement them.
+
+```mermaid
+flowchart TD
+ SCHED["Manual, daily schedule, or backfill"] --> DAG["Airflow clinical_lake_pipeline DAG"]
+ DAG --> ENGINE{"Configured registered engine"}
+ ENGINE --> PY["Canonical Python transformations"]
+ ENGINE --> SP["Optional Spark transformations"]
+ PY --> LAKE["Quality-gated lake publication"]
+ SP --> LAKE
+ LAKE --> SERVE["SQLite or PostgreSQL serving snapshot"]
+ SERVE --> AGENT["Unchanged bounded analyst"]
+```
+
+No existing API, UI, SQL policy, privacy control, metric, statistic, transformation, or serving contract changed. Airflow is installed only with `pip install -e ".[airflow,dev]"`.
+
+#### What this means in plain English
+
+Airflow is the dispatcher. It tells established workers when to begin, waits for each checkpoint, retries operational failures, and records the trip. It cannot rewrite the workers' instructions or waive inspection.
+
+### What Apache Airflow is
+
+Apache Airflow is a workflow scheduler for finite batch jobs. A workflow is represented as a directed acyclic graph, or DAG. Nodes are tasks; directed edges are dependencies. “Acyclic” means no task can eventually depend on itself.
+
+Airflow stores schedules, DAG runs, task attempts, states, and retry timing in its own metadata database. This project separately stores bounded platform lineage such as dataset IDs, snapshot IDs, validation results, and the Airflow run ID. Full Airflow logs and internal database rows are not copied into public APIs.
+
+#### What this means in plain English
+
+Airflow is a calendar plus a checklist and run ledger. The platform lineage record keeps the data-specific receipt; Airflow keeps the scheduler's operational notebook.
+
+### DAGs, tasks, and operators
+
+The `clinical_lake_pipeline` DAG is a static reviewed dependency graph. Each task uses a Python operator or Python sensor. Operators tell Airflow how to invoke a callable; they do not grant that callable new authority.
+
+```mermaid
+flowchart LR
+ START["start_run"] --> GEN["generate_source"]
+ GEN --> SENSOR["wait_for_source_batch"]
+ SENSOR --> RAW["publish_raw"]
+ RAW --> B["transform_bronze"]
+ B --> BG["quality_gate_bronze"]
+ BG --> S["transform_silver"]
+ S --> SG["quality_gate_silver"]
+ SG --> G["transform_gold"]
+ G --> GG["quality_gate_gold"]
+ GG --> PUB["publish_serving"]
+ PUB --> VERIFY["verify_serving"]
+ VERIFY --> DONE["mark_success"]
+```
+
+Task callables exchange only bounded identifiers through XCom: orchestration run ID, batch ID, snapshot ID, and validation summary. They do not exchange raw patient rows or database credentials.
+
+#### What this means in plain English
+
+The DAG is a numbered assembly-line diagram. Every station calls an existing machine and passes the next station a tracking number, not the entire shipment.
+
+### Scheduling, manual runs, catchup, and backfill
+
+The example schedule is `@daily`. `catchup=False` prevents a newly enabled DAG from automatically creating every historical daily interval. Manual triggering is always supported. Backfill is an explicit operator decision that creates runs over a selected historical range.
+
+```bash
+# Install into a dedicated Airflow environment
+pip install -e ".[airflow,dev]"
+
+# Point Airflow at this repository's DAG directory
+export AIRFLOW__CORE__DAGS_FOLDER=/absolute/path/to/agentic_healthcare_data_platform/dags
+export AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+
+airflow db migrate
+airflow dags list
+airflow dags test clinical_lake_pipeline 2026-08-05
+airflow dags trigger clinical_lake_pipeline
+```
+
+Manual configuration can select an engine and fixture profile:
+
+```bash
+airflow dags trigger clinical_lake_pipeline \
+  --conf '{"engine":"python","profile":"test","seed":17,"serving_backend":"sqlite"}'
+```
+
+After validating individual dates, Airflow 2.x backfill can be invoked explicitly:
+
+```bash
+airflow dags backfill clinical_lake_pipeline --start-date 2026-08-01 --end-date 2026-08-05
+```
+
+Airflow 3 installations should use their installed CLI's documented backfill command because command grouping changed between major versions. Backfill remains safe only when the same deterministic IDs and configured storage are available.
+
+#### What this means in plain English
+
+The daily schedule handles tomorrow. Catchup is off so turning on the calendar does not unexpectedly replay years. Backfill is the deliberate button for replaying selected old dates.
+
+### Dependencies and sensors
+
+An Airflow dependency prevents a downstream task from starting before its prerequisite succeeds. `wait_for_source_batch` is a bounded Python sensor that checks the platform metadata store for the generated source batch every two seconds and times out after sixty seconds. It does not poll a cloud service or inspect raw records.
+
+The sensor is useful because source registration is a distinct durable boundary. A future external ingestion process can preserve the same readiness contract without changing downstream transformations.
+
+#### What this means in plain English
+
+The sensor waits for the receiving clerk to stamp the shipment into inventory. It checks for the receipt, not the contents of every box.
+
+### Retries and logging-only notifications
+
+Every task defaults to two retries with a five-minute delay. Configuration can change these values. Retry callbacks write a bounded event and count into `OrchestrationRun`; failure and success callbacks use standard logging. No email, Slack, pager, webhook, or cloud notification service is configured.
+
+```mermaid
+flowchart TD
+ TASK["Run registered task"] --> OK{"Succeeded?"}
+ OK -->|yes| NEXT["Log success; release downstream task"]
+ OK -->|no| LEFT{"Retries remain?"}
+ LEFT -->|yes| WAIT["Record retry; wait configured delay"]
+ WAIT --> TASK
+ LEFT -->|no| FAIL["Record failure; DAG stops"]
+```
+
+Retries are appropriate for transient startup, file-lock, or database-connectivity failures. They do not turn a failed deterministic quality gate into a pass. Re-running the same source and transformation versions remains idempotent.
+
+#### What this means in plain English
+
+If a door is temporarily stuck, Airflow tries again later. If an inspector rejects the shipment, retrying does not erase the rejection or lower the standard.
+
+### Failure recovery and active-snapshot preservation
+
+Each transformation creates a candidate using existing staging and publication semantics. Separate gate tasks confirm that the resulting snapshot is active and validated. A failure raises an exception, blocks downstream publication, records the failing stage, and leaves prior active bronze, silver, gold, and serving snapshots untouched.
+
+```mermaid
+flowchart LR
+ ACTIVE["Previously active validated snapshots"] --> READERS["Serving and analysis continue"]
+ CANDIDATE["New candidate"] --> GATE{"Existing quality gate"}
+ GATE -->|pass| ATOMIC["Atomic activation"]
+ GATE -->|fail| META["Failed run metadata and warnings"]
+ META -. "no downstream tasks" .-> READERS
+```
+
+Airflow's task state does not activate data. Only `LocalFilesystemLakeStore.publish_snapshot` and the existing serving metadata store can do that after validation.
+
+#### What this means in plain English
+
+Airflow may stop the conveyor belt, but it cannot put an uninspected product on the shelf. Customers keep receiving the last approved product.
+
+### Publication and verification flow
+
+After gold passes, `publish_serving` invokes the existing SQLite or PostgreSQL loader boundary. `verify_serving` asks the unchanged bounded analyst a deterministic patient-count question against the activated serving snapshot. That analysis creates the same audit event as any other analysis.
+
+```mermaid
+flowchart TD
+ GOLD["Active validated gold"] --> LOAD{"Existing serving loader"}
+ LOAD --> SQ["SQLite snapshot"]
+ LOAD --> PG["Optional PostgreSQL snapshot"]
+ SQ --> VERIFY["Bounded verification analysis"]
+ PG --> VERIFY
+ VERIFY --> AUDIT["Audit and lineage"]
+ AUDIT --> SUCCESS["mark_success"]
+```
+
+PostgreSQL publication requires the configured DSN and a live server. Airflow does not accept a DSN through DAG configuration, preventing credentials from being copied into run configuration or XCom.
+
+#### What this means in plain English
+
+The pipeline is not declared successful merely because files were written. It loads the approved edition, asks the normal analyst to read it, and keeps the resulting receipt.
+
+### Python versus Spark DAG runs
+
+Set `engine` to `python` or `spark` in DAG configuration. `PipelineOrchestrator` passes that value to the existing `create_transformation_engine` factory for each layer. Python stays canonical and default. Spark still requires Java and the optional dependency.
+
+Airflow never contains an alternate raw-to-bronze, bronze-to-silver, or silver-to-gold implementation. It cannot inject Spark expressions, Python code, quality thresholds, SQL, or metric definitions.
+
+#### What this means in plain English
+
+The dispatcher can assign the job to the hand tool or the larger machine. It cannot invent a third recipe inside the schedule.
+
+### Airflow execution metadata
+
+`OrchestrationRun` records:
+
+- platform orchestration ID, DAG ID, and Airflow run ID;
+- start, finish, and elapsed time;
+- Python or Spark engine;
+- profile, seed, dataset, and source batch;
+- raw, bronze, silver, and gold snapshot/manifest IDs;
+- transformation run IDs;
+- quality results and warnings;
+- serving snapshot and logical manifest;
+- verification analysis run ID;
+- parent lineage, retry count, failure stage, bounded failure message, and logging events.
+
+The Airflow metadata database continues to own scheduler internals such as task instances, heartbeats, pools, and rendered templates. The platform record deliberately avoids filesystem paths, credentials, raw records, and unbounded logs.
+
+### Complete lineage with Airflow
+
+```mermaid
+flowchart RL
+ ANSWER["Evidence-grounded answer"] --> AUDIT["Analysis audit"]
+ AUDIT --> SERVING["Serving snapshot"]
+ SERVING --> GOLD["Gold snapshot"]
+ GOLD --> SILVER["Silver snapshot"]
+ SILVER --> BRONZE["Bronze snapshot"]
+ BRONZE --> RAW["Raw snapshot"]
+ RAW --> ORCH["Airflow / orchestration run"]
+ ORCH --> BATCH["Source batch"]
+ BATCH --> OBJECTS["Checksummed source objects"]
+```
+
+The orchestration ID propagates from raw snapshot metadata through later layer snapshots and the serving snapshot. `LineageResolver` can join that ID to the bounded orchestration store. This is deterministic platform metadata, not an LLM-generated explanation.
+
+#### What this means in plain English
+
+An answer can now identify not only the source and transformations, but also which scheduled or manual Airflow run coordinated them and where that run stopped or succeeded.
+
+### Executors and why Celery is excluded
+
+Use `SequentialExecutor` for the simplest single-process development environment. `LocalExecutor` can run independent local tasks in separate processes when the Airflow metadata database supports it. The current DAG is mostly linear, so parallelism is intentionally limited.
+
+CeleryExecutor and KubernetesExecutor are excluded. They require brokers, remote workers, shared storage, secret distribution, and multi-host operational behavior outside this local-filesystem milestone.
+
+#### What this means in plain English
+
+SequentialExecutor uses one clerk. LocalExecutor can use several clerks in one office. Celery would open branch offices and require a mail network that this project has not built.
+
+### Airflow metadata database
+
+Airflow requires its own metadata database. SQLite is acceptable for `airflow standalone`, DAG parsing, and SequentialExecutor development. Airflow production deployments generally require a supported external database. That operational database is distinct from:
+
+- the clinical analytical serving database;
+- the lake manifest files;
+- the bounded orchestration lineage records;
+- the audit table.
+
+Do not point Airflow's metadata connection at the analytical clinical schema.
+
+### Local setup and platform notes
+
+Apache Airflow is developed for POSIX environments. On Windows, use WSL2 or a Linux development environment. The repository does not add Docker-based Airflow because the local Docker daemon is unavailable and this milestone avoids adding operational infrastructure.
+
+```bash
+python -m venv .venv-airflow
+source .venv-airflow/bin/activate
+pip install -e ".[airflow,dev]"
+
+export AIRFLOW_HOME="$PWD/data/airflow"
+export AIRFLOW__CORE__DAGS_FOLDER="$PWD/dags"
+export AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+airflow standalone
+```
+
+For LocalExecutor, use an Airflow-supported metadata configuration and set:
+
+```bash
+export AIRFLOW__CORE__EXECUTOR=LocalExecutor
+```
+
+The web UI and scheduler are operational tools; the healthcare analyst API does not proxy or expose them.
+
+### Airflow troubleshooting
+
+- **Airflow import missing:** install the optional `.[airflow]` group in a dedicated environment.
+- **Windows startup failure:** run under WSL2/Linux; native Windows is not a supported Airflow production environment.
+- **DAG import error:** confirm `AIRFLOW__CORE__DAGS_FOLDER` points to this repository's `dags` directory and the project is installed.
+- **Task cannot find a source batch:** inspect `generate_source` and sensor logs and verify the configured lake root is shared by tasks.
+- **Task retries forever:** retries are bounded; inspect the persisted retry count and final failure stage.
+- **Quality gate failure:** repair source data or reviewed policy; do not clear the gate task merely to force publication.
+- **Spark task fails:** run `spark-capability`, install Java/PySpark, and retain Python as fallback.
+- **PostgreSQL publication fails:** verify the environment DSN and live server; credentials are not accepted through DAG configuration.
+- **Backfill conflicts:** use deterministic seed/profile configuration and one active run; `max_active_runs=1` protects the local store.
+- **Stale active data:** this is expected after failure—the previous validated snapshot remains active.
+
+### Current Airflow verification results and limitations
+
+The optional Airflow package is not installed in the current Windows runtime, so a real scheduler, metadata migration, webserver, and DAG parse through Airflow itself are not claimed as executed. Runtime-independent tests validate the full runner, task ordering, retry configuration, callbacks, sensor behavior, Python engine, Spark selection, failed-gate preservation, publication, verification, metadata, and analysis lineage. A real DAG-import test is present and skips only when Airflow is absent. The complete available suite reports 166 passed, 17 skipped, and 92.92% coverage.
+
+Docker remains unavailable, so live PostgreSQL publication is also not claimed. The DAG uses only local files and existing optional database configuration. No Celery, Kubernetes, Helm, Terraform, broker, or cloud scheduler was introduced.
+
+### Why Airflow differs from Spark
+
+Spark processes data. Airflow schedules and coordinates processing jobs. Spark understands DataFrames, partitions, shuffles, and Parquet. Airflow understands DAG runs, task dependencies, schedules, retries, and states. Neither is allowed to redefine platform policy.
+
+#### What this means in plain English
+
+Spark is the machine that handles boxes. Airflow is the timetable telling the machine when to run and what approved station comes next.
+
+### Why Airflow differs from Kubernetes
+
+Airflow coordinates batch work at the application level. Kubernetes places and operates containers across machines. Kubernetes does not inherently understand clinical data layers or quality gates; Airflow does not provide pod networking, resource isolation, or cluster deployment.
+
+### Future Kubernetes deployment
+
+```mermaid
+flowchart TD
+ K["Future Kubernetes cluster"] --> API["Analyst API deployment"]
+ K --> AW["Airflow webserver and scheduler"]
+ K --> WORK["Registered task execution"]
+ K --> SPARK["Spark driver/executors"]
+ AW --> WORK
+ WORK --> EXT["Future external metadata and object storage"]
+ API --> PG["External PostgreSQL serving"]
+```
+
+This diagram is a future architecture, not code delivered here. Kubernetes must wait for externalized state, independently containerized services, health/readiness contracts, resource requirements, and operational recovery tests.
+
+### Future cloud deployment
+
+```mermaid
+flowchart LR
+ SCHED["Managed or self-hosted Airflow"] --> JOBS["Registered Python/Spark jobs"]
+ JOBS --> OBJ["Future governed object storage"]
+ OBJ --> DB["Managed serving database"]
+ DB --> API["Deployed bounded analyst"]
+ META["External lineage metadata"] --> API
+ JOBS --> META
+```
+
+No cloud service, SDK, object store, managed scheduler, Terraform, or infrastructure template is included. A future cloud milestone must preserve the same IDs, quality policy, publication rules, and lineage.
+
+#### What this means in plain English
+
+The project has drawn where future buildings might stand; it has not signed a cloud lease or poured a Kubernetes foundation.
+
+### Airflow production-hardening roadmap
+
+Before production use:
+
+- install Airflow with official constraints in a dedicated Linux environment;
+- use a supported external Airflow metadata database;
+- externalize lake and platform metadata from one local filesystem;
+- define service accounts, secrets, encryption, retention, and audit controls;
+- add scheduler/webserver health checks and operational alerts;
+- separate loader and analytical database roles;
+- run live Spark and PostgreSQL integration gates;
+- add idempotency tests under task termination and scheduler restart;
+- define independent container images and resource requirements;
+- add Kubernetes only after those prerequisites pass.
+
+The next recommended milestone is operational service-boundary and external-state preparation for Kubernetes—not Kubernetes manifests themselves.
 
 ## Design decisions, limits, and production hardening
 
