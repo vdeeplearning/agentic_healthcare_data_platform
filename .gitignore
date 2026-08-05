@@ -17,6 +17,13 @@ hs_err_pid*.log
 replay_pid*.log
 derby.log
 metastore_db/
+airflow.db
+airflow.cfg
+airflow-webserver.pid
+airflow-scheduler.pid
+standalone_admin_password.txt
+logs/dag_id=*/
+data/airflow/
 *.log
 *.egg-info/
 .streamlit/secrets.toml

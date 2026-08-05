@@ -42,7 +42,7 @@ def _parse(payload:bytes)->tuple[list[dict[str,Any]],list[str]]:
 class LocalLakePipeline:
     """Create and atomically publish deterministic medallion snapshots."""
 
-    def __init__(self,store:LocalFilesystemLakeStore): self.store=store
+    def __init__(self,store:LocalFilesystemLakeStore,orchestration_run_id:str|None=None): self.store=store; self.orchestration_run_id=orchestration_run_id
 
     def generate_source(self,profile:str="test",seed:int=17,kind:str="initial",parent_batch_id:str|None=None,malformed:bool=False)->SourceBatch:
         if profile not in FIXTURE_PROFILES: raise ValueError(f"Unknown fixture profile: {profile}")
@@ -65,7 +65,7 @@ class LocalLakePipeline:
         manifest_id=_hash("lake-manifest",{"layer":"raw","batch":batch.batch_id,"objects":[item.model_dump(mode="json") for item in batch.objects]})
         manifest=LayerManifest(manifest_id=manifest_id,layer=LakeLayer.raw,dataset_id=batch.dataset_id,transformation_name="source-to-raw",transformation_version=TRANSFORM_VERSIONS["source-to-raw"],parent_ids=[batch.batch_id],objects=batch.objects,row_counts=batch.row_counts,validation=validation)
         self.store.register_layer_manifest(manifest)
-        snapshot=self._snapshot(manifest,[],{"source_batch_id":batch.batch_id,"source_system_id":batch.source_system.source_system_id,"generator_version":batch.generator_version,"generation_parameters":batch.generation_parameters,"random_seed":batch.random_seed,"fixture_profile":batch.fixture_profile,"disclaimer":batch.disclaimer})
+        snapshot=self._snapshot(manifest,[],{"source_batch_id":batch.batch_id,"source_system_id":batch.source_system.source_system_id,"generator_version":batch.generator_version,"generation_parameters":batch.generation_parameters,"random_seed":batch.random_seed,"fixture_profile":batch.fixture_profile,"disclaimer":batch.disclaimer,"orchestration_run_id":self.orchestration_run_id})
         if not validation.passed: return snapshot
         return self.store.publish_snapshot(snapshot)
 
@@ -107,7 +107,7 @@ class LocalLakePipeline:
         if passed:
             self.store.register_edge(LineageEdge(parent_id=source.snapshot_id,child_id=published.snapshot_id,relationship="transformed_to",transformation_name=name,transformation_version=version,checksums=[item.checksum for item in objects],validation_passed=True))
         completed=datetime.now(timezone.utc); run_id=_hash("transform-run",{"name":name,"version":version,"input":source.snapshot_id,"output":manifest_id})
-        return TransformationRun(run_id=run_id,definition=TransformationDefinition(name=name,version=version,input_layer=source.layer,output_layer=output_layer),input_ids=[source.snapshot_id],output_manifest_id=manifest_id,status="completed" if passed else "failed",validation=validation,started_at=started,completed_at=completed,records_read=sum(item.row_count for item in parent.objects),records_written=sum(row_counts.values()),transformation_implementation_version=version)
+        return TransformationRun(run_id=run_id,definition=TransformationDefinition(name=name,version=version,input_layer=source.layer,output_layer=output_layer),input_ids=[source.snapshot_id],output_manifest_id=manifest_id,status="completed" if passed else "failed",validation=validation,started_at=started,completed_at=completed,orchestration_run_id=self.orchestration_run_id,records_read=sum(item.row_count for item in parent.objects),records_written=sum(row_counts.values()),transformation_implementation_version=version)
 
     def run(self,profile:str="test",seed:int=17,engine=None)->dict[str,Any]:
         batch=self.generate_source(profile,seed); raw=self.publish_raw(batch)

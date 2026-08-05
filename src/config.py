@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     spark_master: str = "local[*]"
     spark_shuffle_partitions: int = 4
     spark_log_level: str = "WARN"
+    airflow_dag_id: str = "clinical_lake_pipeline"
+    airflow_schedule: str = "@daily"
+    airflow_retries: int = 2
+    airflow_retry_delay_seconds: int = 300
+    airflow_serving_path: Path = Path("data/generated/airflow-serving.db")
     demo_mode: bool = True
     seed: int = 42
     query_timeout_seconds: float = 5.0
