@@ -13,3 +13,6 @@ Python, SQLite, FastAPI, Streamlit, local lake processing, audit, lineage, bench
 
 The CI badge in the README is the source of truth for the latest remote GitHub Actions result. Local verification results are recorded in release notes only after the complete suite finishes.
 
+## Portfolio release verification
+
+The local release gate completed with 175 passed, 17 optional-runtime skips, and 92.87% source coverage against the required 92% minimum.

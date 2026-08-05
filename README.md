@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/vdeeplearning/agentic_healthcare_data_platform/actions/workflows/ci.yml/badge.svg)](https://github.com/vdeeplearning/agentic_healthcare_data_platform/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB)
-![Coverage](https://img.shields.io/badge/coverage-92.92%25-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-92.87%25-brightgreen)
 ![Data](https://img.shields.io/badge/data-synthetic%20only-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
