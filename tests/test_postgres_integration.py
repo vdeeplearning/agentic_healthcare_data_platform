@@ -17,7 +17,7 @@ from src.metadata.repository import SQLiteManifestStore
 from src.metadata.lineage import LineageResolver
 from src.audit.repository import SQLiteAuditStore
 from src.evaluation.backend_parity import run_backend_parity
-from tests.backend_contract import QueryBackendContract
+from .backend_contract import QueryBackendContract
 
 
 @pytest.fixture(scope="session")

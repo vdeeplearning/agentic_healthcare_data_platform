@@ -1,7 +1,7 @@
 import pytest
 
 from src.database.backend import SQLiteQueryBackend
-from tests.backend_contract import QueryBackendContract
+from .backend_contract import QueryBackendContract
 
 
 @pytest.fixture
