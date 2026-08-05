@@ -333,7 +333,7 @@ Full contracts are in OpenAPI and [docs/api.md](docs/api.md).
 
 ## Project map
 
-`src/agent` owns typed orchestration; `src/safety` deterministic policy; `src/database` creation/read-only access; `src/metrics` immutable definitions; `src/statistics` fixed tools; `src/audit` provenance; `src/api` FastAPI; `src/ui` Streamlit; `src/evaluation` benchmarks; `sql` schema/views/indexes/reference queries; `tests` regression coverage; `docs` design detail.
+`src/agent` owns typed orchestration and planner adapters; `src/safety` deterministic policy; `src/database` engine-neutral catalog/execution contracts, the SQLite backend, and synthetic-data lifecycle seams; `src/metrics` immutable definitions; `src/statistics` fixed tools; `src/audit` the audit-store contract and SQLite provenance; `src/api` FastAPI; `src/ui` Streamlit; `src/evaluation` benchmarks; `sql` schema/views/indexes/reference queries; `tests` regression and compatibility coverage; `docs` design detail and ADRs. See the [distributed platform foundation](docs/platform_foundation.md).
 
 ## Design decisions, limits, and production hardening
 

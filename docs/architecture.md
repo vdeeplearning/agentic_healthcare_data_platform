@@ -4,3 +4,7 @@ The system divides probabilistic interpretation from deterministic authority. A 
 
 The graph is bounded: clarification and denial terminate immediately; SQL has at most two repair opportunities by design (the baseline performs zero automatic repairs); result repair is limited to one; answer validation permits one evidence-only rewrite. Trace events expose decisions, not hidden reasoning.
 
+## Platform seams
+
+The workflow now depends on narrow `QueryBackend`, `AuditStore`, and `Planner` contracts. SQLite implementations preserve the original behavior and remain the only enabled implementations. Catalog metadata and query results use engine-neutral internal models, while deterministic SQL authorization, privacy controls, metric governance, result checks, statistics, and answer grounding remain centralized. See [distributed platform foundation](platform_foundation.md) and the [architecture decisions](adr/).
+

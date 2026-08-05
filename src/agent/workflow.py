@@ -1,13 +1,15 @@
 """Bounded analysis workflow. Structured steps can be represented as a LangGraph in live extensions."""
 from __future__ import annotations
-import sqlite3,time,uuid
+import uuid
 from pathlib import Path
 from typing import Any
 from src.agent.schemas import AnalysisPlan,AnalysisResponse,TraceEvent,ValidationReport
-from src.audit.repository import write_audit
-from src.database.connection import connect_read_only
+from src.audit.repository import AuditStore,SQLiteAuditStore
+from src.database.backend import QueryBackend,SQLiteQueryBackend
+from src.database.models import ExecutionContext
 from src.demo.curated_questions import curated
 from src.agent.live_planner import generate_live_proposal
+from src.agent.planner import ExistingPlanner,Planner
 from src.metrics.registry import METRICS
 from src.safety.privacy import classify_risk,suppress_small_cells
 from src.safety.prompt_injection import injection_warnings
@@ -17,7 +19,12 @@ from src.statistics.tools import run_statistical_tool
 
 class Analyst:
     """Orchestrates an allowlisted, bounded query pipeline."""
-    def __init__(self,db_path:Path,max_rows:int=1000,timeout_seconds:float=5,small_cell_threshold:int=10,model:str="gpt-5.6-sol"): self.db_path=db_path; self.max_rows=max_rows; self.timeout_seconds=timeout_seconds; self.small_cell_threshold=small_cell_threshold; self.model=model
+    def __init__(self,db_path:Path,max_rows:int=1000,timeout_seconds:float=5,small_cell_threshold:int=10,model:str="gpt-5.6-sol",*,query_backend:QueryBackend|None=None,audit_store:AuditStore|None=None,planner:Planner|None=None):
+        self.db_path=Path(db_path); self.max_rows=max_rows; self.timeout_seconds=timeout_seconds; self.small_cell_threshold=small_cell_threshold; self.model=model
+        self.query_backend=query_backend or SQLiteQueryBackend(self.db_path)
+        self._uses_default_audit_store=audit_store is None
+        self.audit_store=audit_store or SQLiteAuditStore(self.db_path)
+        self.planner=planner or ExistingPlanner(self.db_path,curated,generate_live_proposal)
     def analyze(self,question:str,api_key:str|None=None,conversation_context:list[dict[str,Any]]|None=None)->AnalysisResponse:
         run_id=str(uuid.uuid4()); trace=[]; warnings=injection_warnings(question); risk,risk_warnings=classify_risk(question); warnings+=risk_warnings
         trace.append(TraceEvent(step="normalize_question",status="ok",detail="Whitespace and casing normalized for classification."))
@@ -28,7 +35,7 @@ class Analyst:
             trace.append(TraceEvent(step="determine_if_clarification_needed",status="blocked",detail="Ranking metric is unspecified."))
             return self._finish(run_id,question,"clarification_required","A metric is needed before analysis.",plan,None,[],warnings,trace,None,plan.clarification_question)
         follow_up=bool(conversation_context) and self._looks_like_follow_up(question)
-        known=None if follow_up else curated(question)
+        known=None if follow_up else self.planner.curated(question)
         if not known:
             if not api_key:
                 plan=AnalysisPlan(normalized_question=q,analysis_intent="unsupported deterministic request",ambiguity_detected=True,clarification_question="This question is not in deterministic demo mode. Paste an OpenAI API key or choose one of the curated examples.",risk_tier=risk)
@@ -36,7 +43,7 @@ class Analyst:
                 return self._finish(run_id,question,"clarification_required","The request needs an API-backed plan or a supported template.",plan,None,[],warnings,trace,None,plan.clarification_question)
             trace.append(TraceEvent(step="classify_request",status="ok",detail="Routing unsupported demo question to the structured OpenAI planner."))
             try:
-                proposal=generate_live_proposal(question,api_key,self.db_path,self.model,conversation_context)
+                proposal=self.planner.live(question,api_key,self.model,conversation_context)
             except Exception as exc:
                 detail=self._safe_openai_error(exc,api_key)
                 trace.append(TraceEvent(step="create_analysis_plan",status="blocked",detail=detail))
@@ -55,20 +62,17 @@ class Analyst:
             plan,sql=known
             trace += [TraceEvent(step="classify_request",status="ok",detail=plan.analysis_intent),TraceEvent(step="create_analysis_plan",status="ok",detail="Plan passed Pydantic validation."),TraceEvent(step="generate_sql",status="ok",detail="Selected bounded deterministic SQL template.")]
         plan.risk_tier=risk if plan.risk_tier=="low" else plan.risk_tier
-        validation=validate_sql(sql,self.db_path,max_rows=self.max_rows); trace.append(TraceEvent(step="validate_sql",status="ok" if validation.valid else "blocked",detail="; ".join(validation.errors or ["AST, schema, function, and join checks passed."])))
+        catalog=self.query_backend.discover_catalog()
+        validation=validate_sql(sql,max_rows=self.max_rows,catalog=catalog); trace.append(TraceEvent(step="validate_sql",status="ok" if validation.valid else "blocked",detail="; ".join(validation.errors or ["AST, schema, function, and join checks passed."])))
         warnings+=validation.warnings
         if not validation.valid: return self._finish(run_id,question,"failed","SQL validation failed safely.",plan,sql,[],warnings,trace,validation)
         sql=validation.sql or sql
-        started=time.perf_counter()
         try:
-            with connect_read_only(self.db_path) as connection:
-                deadline=time.monotonic()+self.timeout_seconds; connection.set_progress_handler(lambda: 1 if time.monotonic()>deadline else 0,1000)
-                query_plan=[dict(r) for r in connection.execute("EXPLAIN QUERY PLAN "+sql).fetchall()]
-                cursor=connection.execute(sql); columns=[d[0] for d in cursor.description]; rows=[dict(zip(columns,row)) for row in cursor.fetchmany(self.max_rows+1)]
-        except sqlite3.Error as exc:
+            execution=self.query_backend.execute(sql,ExecutionContext(run_id=run_id,correlation_id=run_id,timeout_seconds=self.timeout_seconds,dataset_id="synthetic-clinical"),self.max_rows)
+        except Exception as exc:
             trace.append(TraceEvent(step="execute_query",status="blocked",detail=str(exc))); return self._finish(run_id,question,"failed","Query execution failed safely.",plan,sql,[],warnings,trace,validation)
-        elapsed=(time.perf_counter()-started)*1000
-        if len(rows)>self.max_rows: rows=rows[:self.max_rows]; warnings.append("Result truncated at the configured row limit.")
+        rows=execution.rows; query_plan=execution.query_plan; elapsed=execution.execution_time_ms
+        if execution.truncated: warnings.append("Result truncated at the configured row limit.")
         trace += [TraceEvent(step="inspect_query_plan",status="warning" if any("SCAN" in str(x) for x in query_plan) else "ok",detail=f"Reviewed {len(query_plan)} plan operations."),TraceEvent(step="execute_query",status="ok",detail=f"Read-only query returned {len(rows)} rows."),TraceEvent(step="validate_results",status="ok",detail="Deterministic plausibility checks completed.")]
         warnings+=validate_results(rows); rows,suppression=suppress_small_cells(rows,self.small_cell_threshold); warnings+=suppression
         statistic=None
@@ -115,5 +119,5 @@ class Analyst:
         return message[:500]
     def _finish(self,run_id,question,status,answer,plan,sql,rows,warnings,trace,validation,clarification=None,statistics=None,elapsed=None,query_plan=None):
         response=AnalysisResponse(run_id=run_id,status=status,question=question,answer=answer,clarification_question=clarification,plan=plan,sql=sql,columns=list(rows[0]) if rows else [],rows=rows,warnings=list(dict.fromkeys(warnings)),validation=validation,trace=trace,metric_definition=METRICS[plan.metric_name].model_dump() if plan and plan.metric_name in METRICS else None,statistics=statistics,execution_time_ms=elapsed,provenance={"database":str(self.db_path),"read_only":True,"query_plan":query_plan or [],"synthetic_data":True})
-        if self.db_path.exists(): write_audit(self.db_path,{"run_id":run_id,"question":question,"normalized_question":plan.normalized_question if plan else question.lower(),"model_name":self.model if any(event.detail.startswith("OpenAI") for event in trace) else "deterministic-demo","plan":plan.model_dump() if plan else None,"sql":sql,"validation_status":"passed" if validation and validation.valid else status,"execution_status":status,"row_count":len(rows),"execution_time_ms":elapsed,"statistical_tools":statistics,"warnings":warnings,"final_answer":answer})
+        if self.db_path.exists() or not self._uses_default_audit_store: self.audit_store.write({"run_id":run_id,"question":question,"normalized_question":plan.normalized_question if plan else question.lower(),"model_name":self.model if any(event.detail.startswith("OpenAI") for event in trace) else "deterministic-demo","plan":plan.model_dump() if plan else None,"sql":sql,"validation_status":"passed" if validation and validation.valid else status,"execution_status":status,"row_count":len(rows),"execution_time_ms":elapsed,"statistical_tools":statistics,"warnings":warnings,"final_answer":answer})
         return response

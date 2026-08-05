@@ -1,0 +1,19 @@
+{
+  "statuses": ["completed", "clarification_required", "denied", "failed"],
+  "completed_hospital_answer": "The synthetic dataset contains 30 hospitals.",
+  "clarification_answer": "A metric is needed before analysis.",
+  "denial_answer": "Request denied by the high-risk privacy policy.",
+  "empty_answer": "The validated query returned no data, so no conclusion is supported.",
+  "completed_trace": [
+    "normalize_question",
+    "classify_request",
+    "create_analysis_plan",
+    "generate_sql",
+    "validate_sql",
+    "inspect_query_plan",
+    "execute_query",
+    "validate_results",
+    "compose_grounded_answer",
+    "validate_answer_faithfulness"
+  ]
+}

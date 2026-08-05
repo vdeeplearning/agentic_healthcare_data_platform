@@ -21,7 +21,8 @@ def connect_read_only(path: Path) -> sqlite3.Connection:
 
 
 def schema_catalog(path: Path) -> dict[str, set[str]]:
-    with connect_read_only(path) as connection:
-        tables = connection.execute("SELECT name FROM sqlite_schema WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%'").fetchall()
-        return {row[0]: {column[1] for column in connection.execute(f'PRAGMA table_info("{row[0]}")')} for row in tables}
+    """Compatibility wrapper for callers expecting the original mapping."""
+    from src.database.backend import SQLiteQueryBackend
+
+    return SQLiteQueryBackend(path).discover_catalog().column_names()
 
