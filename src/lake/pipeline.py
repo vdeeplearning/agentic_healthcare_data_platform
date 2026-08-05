@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import date,datetime,timezone
 from typing import Any
 
 from src.database.generator import SyntheticRecordGenerator
@@ -69,7 +69,13 @@ class LocalLakePipeline:
         if not validation.passed: return snapshot
         return self.store.publish_snapshot(snapshot)
 
-    def transform(self,input_snapshot_id:str,output_layer:LakeLayer,version:str|None=None)->TransformationRun:
+    def transform(self,input_snapshot_id:str,output_layer:LakeLayer,version:str|None=None,engine=None)->TransformationRun:
+        if engine is None:
+            from src.lake.engines import LocalPythonTransformationEngine
+            engine=LocalPythonTransformationEngine()
+        return engine.transform(self,input_snapshot_id,output_layer,version)
+
+    def _transform_local(self,input_snapshot_id:str,output_layer:LakeLayer,version:str|None=None)->TransformationRun:
         source=self.store.get_snapshot(input_snapshot_id)
         if not source: raise KeyError(f"Unknown input snapshot: {input_snapshot_id}")
         expected={LakeLayer.bronze:LakeLayer.raw,LakeLayer.silver:LakeLayer.bronze,LakeLayer.gold:LakeLayer.silver}
@@ -92,11 +98,7 @@ class LocalLakePipeline:
                 rows=clean
             payload=_jsonl(rows); object_id=_hash("object",{"layer":output_layer.value,"entity":item.entity,"version":version,"parent":item.object_id,"checksum":hashlib.sha256(payload).hexdigest()})
             objects.append(self.store.write_object(output_layer,item.entity,object_id,payload,len(rows))); row_counts[item.entity]=len(rows)
-        checks={"input_checksums":not errors,"expected_objects":len(objects)==len(parent.objects),"parse_success":not warnings,"expected_columns":expected_columns}
-        if output_layer==LakeLayer.bronze: checks["duplicate_source_objects"]=len({item.object_id for item in parent.objects})==len(parent.objects)
-        if output_layer==LakeLayer.silver: checks.update(self._silver_checks(objects))
-        if output_layer==LakeLayer.gold:
-            checks.update({"quality_rate_bounds":self._gold_rates(objects),"required_entities":{"patients","encounters","quality_measures"}.issubset(row_counts),"synthetic_identifiers_only":True})
+        checks=self.quality_checks(output_layer,parent,objects,row_counts,errors,warnings,expected_columns)
         passed=all(checks.values()); validation=ValidationResult(passed=passed,checks=checks,errors=errors+([] if passed else ["Layer quality gate failed."]),warnings=warnings,rejected_rows=sum(rejected.values()))
         manifest_id=_hash("lake-manifest",{"layer":output_layer.value,"dataset":parent.dataset_id,"version":version,"parent":source.snapshot_id,"objects":[item.model_dump(mode="json") for item in objects],"validation":validation.model_dump(mode="json")})
         manifest=LayerManifest(manifest_id=manifest_id,layer=output_layer,dataset_id=parent.dataset_id,transformation_name=name,transformation_version=version,parent_ids=[source.snapshot_id],objects=objects,row_counts=row_counts,rejected_row_counts=rejected,validation=validation)
@@ -105,13 +107,13 @@ class LocalLakePipeline:
         if passed:
             self.store.register_edge(LineageEdge(parent_id=source.snapshot_id,child_id=published.snapshot_id,relationship="transformed_to",transformation_name=name,transformation_version=version,checksums=[item.checksum for item in objects],validation_passed=True))
         completed=datetime.now(timezone.utc); run_id=_hash("transform-run",{"name":name,"version":version,"input":source.snapshot_id,"output":manifest_id})
-        return TransformationRun(run_id=run_id,definition=TransformationDefinition(name=name,version=version,input_layer=source.layer,output_layer=output_layer),input_ids=[source.snapshot_id],output_manifest_id=manifest_id,status="completed" if passed else "failed",validation=validation,started_at=started,completed_at=completed)
+        return TransformationRun(run_id=run_id,definition=TransformationDefinition(name=name,version=version,input_layer=source.layer,output_layer=output_layer),input_ids=[source.snapshot_id],output_manifest_id=manifest_id,status="completed" if passed else "failed",validation=validation,started_at=started,completed_at=completed,records_read=sum(item.row_count for item in parent.objects),records_written=sum(row_counts.values()),transformation_implementation_version=version)
 
-    def run(self,profile:str="test",seed:int=17)->dict[str,Any]:
+    def run(self,profile:str="test",seed:int=17,engine=None)->dict[str,Any]:
         batch=self.generate_source(profile,seed); raw=self.publish_raw(batch)
-        bronze=self.transform(raw.snapshot_id,LakeLayer.bronze); bronze_snapshot=self.store.get_active_snapshot(LakeLayer.bronze)
-        silver=self.transform(bronze_snapshot.snapshot_id,LakeLayer.silver); silver_snapshot=self.store.get_active_snapshot(LakeLayer.silver)
-        gold=self.transform(silver_snapshot.snapshot_id,LakeLayer.gold); gold_snapshot=self.store.get_active_snapshot(LakeLayer.gold)
+        bronze=self.transform(raw.snapshot_id,LakeLayer.bronze,engine=engine); bronze_snapshot=self.store.get_active_snapshot(LakeLayer.bronze)
+        silver=self.transform(bronze_snapshot.snapshot_id,LakeLayer.silver,engine=engine); silver_snapshot=self.store.get_active_snapshot(LakeLayer.silver)
+        gold=self.transform(silver_snapshot.snapshot_id,LakeLayer.gold,engine=engine); gold_snapshot=self.store.get_active_snapshot(LakeLayer.gold)
         return {"batch":batch,"raw":raw,"bronze_run":bronze,"silver_run":silver,"gold_run":gold,"gold":gold_snapshot}
 
     def _snapshot(self,manifest:LayerManifest,parents:list[str],metadata:dict[str,Any])->PublishedSnapshot:
@@ -124,12 +126,26 @@ class LocalLakePipeline:
         rows,_=_parse(self.store.read_object(target))
         return all(0<=float(row["measure_value"])<=1 and int(row["numerator"])<=int(row["denominator"]) for row in rows)
 
+    def quality_checks(self,output_layer:LakeLayer,parent:LayerManifest,objects:list[DataObject],row_counts:dict[str,int],errors:list[str],warnings:list[str],expected_columns:bool)->dict[str,bool]:
+        checks={"input_checksums":not errors,"expected_objects":len(objects)==len(parent.objects),"parse_success":not warnings,"expected_columns":expected_columns}
+        if output_layer==LakeLayer.bronze: checks["duplicate_source_objects"]=len({item.object_id for item in parent.objects})==len(parent.objects)
+        if output_layer==LakeLayer.silver: checks.update(self._silver_checks(objects))
+        if output_layer==LakeLayer.gold: checks.update({"quality_rate_bounds":self._gold_rates(objects),"required_entities":{"patients","encounters","quality_measures"}.issubset(row_counts),"synthetic_identifiers_only":True})
+        return checks
+
     def _silver_checks(self,objects:list[DataObject])->dict[str,bool]:
         data={item.entity:_parse(self.store.read_object(item))[0] for item in objects}
         patient_ids={row["patient_id"] for row in data.get("patients",[])}; hospital_ids={row["hospital_id"] for row in data.get("hospitals",[])}; encounter_ids={row["encounter_id"] for row in data.get("encounters",[])}
         identifiers=all(all(isinstance(row.get(keys[0]),int) and row[keys[0]]>0 for row in data.get(entity,[])) for entity,keys in ENTITY_KEYS.items() if entity!="lab_results")
         domains=all(row.get("sex") in {"F","M","X"} for row in data.get("patients",[])) and all(row.get("encounter_type") in {"inpatient","emergency","outpatient"} for row in data.get("encounters",[]))
         foreign_keys=all(row.get("patient_id") in patient_ids and row.get("hospital_id") in hospital_ids for row in data.get("encounters",[])) and all(row.get("encounter_id") in encounter_ids for row in data.get("lab_results",[]))
-        date_values=[value for rows in data.values() for row in rows for key,value in row.items() if value is not None and (key.endswith("_date") or key.endswith("_at") or key.startswith("measurement_period_"))]
-        date_parse_success=all(isinstance(value,str) and len(value)>=10 and value[:4].isdigit() and value[4]=="-" and value[7]=="-" for value in date_values)
+        date_values=[(key,value) for rows in data.values() for row in rows for key,value in row.items() if value is not None and (key.endswith("_date") or key.endswith("_at") or key.startswith("measurement_period_"))]
+        def valid_date(item):
+            key,value=item
+            if not isinstance(value,str): return False
+            try:
+                datetime.fromisoformat(value.replace("Z","+00:00")) if key.endswith("_at") else date.fromisoformat(value)
+                return True
+            except ValueError: return False
+        date_parse_success=all(valid_date(item) for item in date_values)
         return {"identifier_validity":identifiers,"date_parse_success":date_parse_success,"categorical_domains":domains,"foreign_key_consistency":foreign_keys,"missingness_within_fixture_contract":True}

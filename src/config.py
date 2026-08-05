@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     postgres_storage_identity: str = "postgres:public"
     metadata_path: Path | None = None
     lake_root: Path = Path("data/lake")
+    lake_transform_engine: Literal["python","spark"] = "python"
+    spark_master: str = "local[*]"
+    spark_shuffle_partitions: int = 4
+    spark_log_level: str = "WARN"
     demo_mode: bool = True
     seed: int = 42
     query_timeout_seconds: float = 5.0

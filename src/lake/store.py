@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import tempfile
+import shutil
 from pathlib import Path, PurePosixPath
 from typing import Protocol, runtime_checkable
 
@@ -26,6 +27,7 @@ class LakeStore(Protocol):
     def publish_snapshot(self, snapshot: PublishedSnapshot) -> PublishedSnapshot: ...
     def resolve_parent_lineage(self, snapshot_id: str) -> list[PublishedSnapshot]: ...
     def validate_checksum(self, data_object: DataObject) -> bool: ...
+    def physical_object_path(self,data_object:DataObject)->Path: ...
 
 
 class LocalFilesystemLakeStore:
@@ -83,7 +85,29 @@ class LocalFilesystemLakeStore:
         path=self._safe(*relative.split("/")); self._atomic(path,payload,immutable=layer==LakeLayer.raw)
         return DataObject(object_id=object_id,layer=layer,entity=entity,relative_path=relative,checksum=self.checksum(payload),row_count=row_count,size_bytes=len(payload))
 
-    def read_object(self,data_object:DataObject)->bytes: return self._safe(*data_object.relative_path.split("/")).read_bytes()
+    def spark_staging_path(self,identifier:str)->Path:
+        if not identifier.replace("-","").isalnum(): raise ValueError("Unsafe staging identity.")
+        path=self._safe("staging",identifier)
+        if path.exists(): shutil.rmtree(path)
+        return path
+
+    def publish_parquet_object(self,layer:LakeLayer,entity:str,object_id:str,staging:Path,logical_payload:bytes,row_count:int)->DataObject:
+        if layer==LakeLayer.raw: raise ValueError("Raw objects remain source-format JSON Lines.")
+        staging=Path(staging).resolve()
+        if self._safe("staging") not in staging.parents: raise ValueError("Parquet staging path escapes lake staging.")
+        relative=f"objects/{layer.value}/{entity}/{object_id}.parquet"; destination=self._safe(*relative.split("/")); destination.parent.mkdir(parents=True,exist_ok=True)
+        (staging/"_logical.jsonl").write_bytes(logical_payload)
+        if destination.exists():
+            if (destination/"_logical.jsonl").read_bytes()!=logical_payload: raise LakeConflictError(f"Identifier conflicts with existing content: {object_id}")
+            shutil.rmtree(staging)
+        else: os.replace(staging,destination)
+        size=sum(path.stat().st_size for path in destination.rglob("*") if path.is_file())
+        return DataObject(object_id=object_id,layer=layer,entity=entity,relative_path=relative,format="parquet",checksum=self.checksum(logical_payload),row_count=row_count,size_bytes=size)
+
+    def read_object(self,data_object:DataObject)->bytes:
+        path=self._safe(*data_object.relative_path.split("/"))
+        return (path/"_logical.jsonl").read_bytes() if path.is_dir() else path.read_bytes()
+    def physical_object_path(self,data_object:DataObject)->Path: return self._safe(*data_object.relative_path.split("/"))
     def object_exists(self,data_object:DataObject)->bool: return self._safe(*data_object.relative_path.split("/")).exists()
     def validate_checksum(self,data_object:DataObject)->bool: return self.object_exists(data_object) and self.checksum(self.read_object(data_object))==data_object.checksum
 

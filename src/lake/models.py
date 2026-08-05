@@ -95,6 +95,16 @@ class TransformationRun(BaseModel):
     completed_at: datetime
     orchestration_run_id: str | None = None
     distributed_job_id: str | None = None
+    execution_engine: str = "python"
+    engine_version: str | None = None
+    spark_application_id: str | None = None
+    spark_master: str | None = None
+    input_partition_count: int | None = None
+    output_partition_count: int | None = None
+    records_read: int = 0
+    records_written: int = 0
+    physical_format: str = "jsonl"
+    transformation_implementation_version: str = "1.0.0"
 
 
 class PublicationCandidate(BaseModel):

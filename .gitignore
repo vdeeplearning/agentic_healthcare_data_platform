@@ -8,6 +8,15 @@ venv/
 .env
 data/generated/*.db*
 data/lake/
+spark-warehouse/
+.sparkStaging/
+data/spark/
+data/parity-reports/
+*.parquet.tmp/
+hs_err_pid*.log
+replay_pid*.log
+derby.log
+metastore_db/
 *.log
 *.egg-info/
 .streamlit/secrets.toml

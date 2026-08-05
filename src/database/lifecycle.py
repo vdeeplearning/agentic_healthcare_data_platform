@@ -32,6 +32,7 @@ FIXTURE_PROFILES = {
     "test": FixtureProfile("test", 300, 1_200),
     "demo": FixtureProfile("demo", 2_500, 10_000),
     "full": FixtureProfile("full", 25_000, 100_000),
+    "spark-scale": FixtureProfile("spark-scale", 50_000, 200_000),
 }
 
 

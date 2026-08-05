@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov>=5"]
+spark = ["pyspark>=3.5,<4.1", "pyarrow>=15"]
 
 [project.scripts]
 clinical-sql = "src.cli:main"
