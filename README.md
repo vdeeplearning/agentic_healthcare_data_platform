@@ -892,6 +892,231 @@ Each platform would create its own disconnected job IDs, leaving no reliable cha
 
 For local verification, the existing commands remain valid. The metadata sidecar is created automatically beside a generated database and is covered by `data/generated/*.db*` in `.gitignore`.
 
+## Optional PostgreSQL analytical backend
+
+PostgreSQL is now the second implementation of the analytical query and logical-record loading contracts. It is an addition, not a migration: SQLite remains the default backend, the zero-configuration demo, the always-on CI fixture, the compatibility reference, and the fastest rollback option.
+
+Set the execution backend without changing application code:
+
+```env
+DATABASE_BACKEND=sqlite
+```
+
+or:
+
+```env
+DATABASE_BACKEND=postgres
+POSTGRES_DSN=postgresql://user:password@host:5432/clinical
+CLINICAL_SQL_POSTGRES_SCHEMA=public
+CLINICAL_SQL_POSTGRES_STORAGE_IDENTITY=postgres:public
+CLINICAL_SQL_METADATA_PATH=data/generated/postgres.metadata.db
+```
+
+Routes, request and response models, Streamlit, planner contracts, metric definitions, privacy controls, statistical tools, trace ordering, and audit behavior remain the same. Only bounded catalog discovery and execution move behind `PostgresQueryBackend`.
+
+```mermaid
+flowchart TD
+ U["FastAPI, Streamlit, and CLI"] --> W["Bounded Analyst workflow"]
+ W --> V["Central SQL and privacy authorization"]
+ V --> F{"Configured QueryBackend"}
+ F -->|"default"| SQ["Read-only SQLite backend"]
+ F -->|"optional"| PG["Read-only PostgreSQL backend"]
+ SQ --> NR["Normalized QueryExecutionResult"]
+ PG --> NR
+ NR --> RV["Shared result validation, suppression, statistics, and grounding"]
+```
+
+### What changed in this release
+
+- Added psycopg 3 as the sole new runtime dependency.
+- Added configuration-driven backend selection.
+- Added PostgreSQL catalog normalization, JSON `EXPLAIN`, server-side statement timeout, read-only transactions, row limits, result normalization, and bounded provenance.
+- Added logically equivalent PostgreSQL tables, constraints, foreign keys, indexes, and views.
+- Added a transactional PostgreSQL loader consuming the existing logical batches.
+- Reused manifest and snapshot registration; PostgreSQL materializations receive distinct snapshot IDs.
+- Made SQLGlot render validated SQL in the configured dialect.
+- Made live planning receive the selected backend's bounded catalog and dialect, never its DSN or connection.
+- Added the identical reusable contract suite for PostgreSQL plus cross-engine snapshot and analytical parity tests.
+- Added an optional Compose overlay; the original Compose file and behavior are unchanged.
+
+#### What this means in plain English
+
+The application learned to speak to a second database through the socket it already had. The buttons, questions, safety officer, calculations, and receipts did not change; only the database adapter behind them can be switched.
+
+### Why PostgreSQL?
+
+SQLite is excellent for an inspectable portfolio demo but is one local file with cooperative timeouts and limited concurrent-service operations. PostgreSQL provides server-enforced transactions, native dates, mature concurrent access, schemas, roles, server-side statement timeouts, detailed plans, and operational tooling. It is a useful production-style serving database and a focused proof that the internal contracts are real.
+
+PostgreSQL was intentionally chosen before Spark. A second SQL serving engine tests the existing query and loader seams without simultaneously adding distributed transformation, orchestration, object storage, and deployment concerns.
+
+#### What this means in plain English
+
+SQLite is a reliable workshop notebook. PostgreSQL is a staffed records room designed for many controlled users. Both can hold the same governed facts, but they solve different operational problems.
+
+### Why SQLite remains
+
+PostgreSQL does not replace the qualities that make SQLite valuable:
+
+- no service installation or credentials;
+- deterministic databases created by one command;
+- very fast local tests;
+- easy inspection and copying;
+- stable CI reference behavior;
+- a fallback if PostgreSQL is unavailable;
+- a permanent semantic compatibility fixture.
+
+Every future backend must match SQLite's externally visible semantics; SQLite does not become a neglected “legacy mode.”
+
+#### What this means in plain English
+
+Adding a delivery truck does not require throwing away the bicycle that remains perfect for short local trips.
+
+### SQLite versus PostgreSQL
+
+| Concern | SQLite | PostgreSQL |
+|---|---|---|
+| Default | Yes | No, explicit opt-in |
+| Startup | One local command | Running server and DSN |
+| Query authority | Central validator plus query-only connection | Central validator plus read-only transaction |
+| Timeout | Cooperative progress handler | Server-side `statement_timeout` |
+| Query plan | `EXPLAIN QUERY PLAN` | `EXPLAIN (FORMAT JSON)` |
+| Dates | ISO text | Native `DATE`/`TIMESTAMPTZ` |
+| Auto IDs | SQLite row ID behavior | Identity column |
+| Numeric output | Python int/float | Decimal/native values normalized to int/float |
+| Loading | Staged file replacement | Transactional schema materialization |
+| Best role | Demo, CI, compatibility, rollback | Production-style analytical serving |
+
+Physical differences are expected. Logical entities, eligibility, keys, constraints, views, registered metrics, and returned analytical evidence must remain equivalent.
+
+### One logical dataset, two snapshots
+
+Both loaders consume `SyntheticRecordGenerator.batches()`. No PostgreSQL-specific random formula exists. Consequently, matching generator inputs create one dataset ID and one manifest ID, while backend-specific materialization creates two snapshot IDs.
+
+```mermaid
+flowchart LR
+ IN["Seed 17, test profile, generator 1.0.0"] --> LR["Shared logical records"]
+ LR --> M["One dataset and manifest identity"]
+ M --> SL["SQLite loader"]
+ M --> PL["PostgresLoader"]
+ SL --> SS["SQLite snapshot ID"]
+ PL --> PS["PostgreSQL snapshot ID"]
+ SS --> EQ["Equivalent governed analytical results"]
+ PS --> EQ
+```
+
+The backend name, loader, schema, storage identity, and materialization parameters participate in snapshot identity, so SQLite and PostgreSQL snapshots cannot be confused. Their shared dataset identity proves their intended logical origin.
+
+#### What this means in plain English
+
+One manuscript can produce a paperback and an e-book. They carry the same text and edition record, but each copy has its own format and inventory identifier.
+
+### How QueryBackend made this possible
+
+The workflow does not call `sqlite3` or psycopg directly. It asks a `QueryBackend` for an approved catalog, sends SQL only after central validation, and receives `QueryExecutionResult`. Each adapter owns only engine mechanics:
+
+- catalog queries;
+- read-only transaction setup;
+- native timeout configuration;
+- plan inspection;
+- bounded fetching;
+- type and row normalization;
+- backend-safe provenance.
+
+The adapter cannot approve SQL, redefine metrics, suppress cells, select statistical tools, or ground answers. Those remain common deterministic stages after execution.
+
+#### What this means in plain English
+
+Both database drivers must pass through the same security checkpoint. A driver can operate its vehicle; it cannot issue itself a travel permit.
+
+### PostgreSQL loading
+
+`PostgresLoader` uses the same logical records as SQLite, creates the configured schema transactionally, applies the PostgreSQL physical DDL, loads batches with psycopg, checks actual row counts and quality invariants, and registers the same logical manifest plus a PostgreSQL snapshot. A failed database transaction rolls back and cannot activate a snapshot.
+
+Run an explicit small load:
+
+```bash
+python -m src.database.postgres_loader \
+  --dsn "postgresql://user:password@localhost:5432/clinical" \
+  --schema public \
+  --metadata-path data/generated/postgres.metadata.db \
+  --storage-identity postgres:public \
+  --seed 17 --patients 300 --encounters 1200
+```
+
+The existing `python -m src.database.seed` command remains SQLite-only and unchanged.
+
+### Optional Docker Compose PostgreSQL stack
+
+The original command still launches the original SQLite API/UI stack:
+
+```bash
+docker compose up --build
+```
+
+Use the overlay only when PostgreSQL is wanted:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build
+```
+
+The overlay adds PostgreSQL and a one-shot logical-record loader, then configures the API for PostgreSQL. Its bundled password is explicitly local synthetic-demo configuration, not a production secret.
+
+### Backend parity testing
+
+`QueryBackendContract` runs unchanged against both engines. It checks catalogs, normalized types, hidden objects, centralized mutation rejection, backend read-only enforcement, nulls, numerics, plans, row growth, truncation, timeout cancellation, execution timing, identity, and provenance.
+
+PostgreSQL integration tests are opt-in so ordinary SQLite contributors still need no server:
+
+```bash
+set CLINICAL_SQL_TEST_POSTGRES_DSN=postgresql://user:password@localhost:5432/clinical
+python -m pytest tests/test_postgres_integration.py
+```
+
+Unit tests exercise driver normalization, backend orchestration, loader batching, manifests, and snapshot identity without a server. The live suite is the authority for claiming real server parity.
+
+#### What this means in plain English
+
+Both engines sit the same driving test. PostgreSQL also has garage tests for its own machinery. If no PostgreSQL server exists, the report says the road test was skipped rather than pretending a mock is a server.
+
+### Performance discussion
+
+This milestone establishes correctness boundaries, not a universal performance winner. SQLite often wins tiny local startup and fixture tests because it has no network round trip. PostgreSQL is designed for concurrent sessions, server memory management, parallel planning, role-based operations, and larger durable serving workloads.
+
+Performance comparisons must use equivalent snapshots, warm/cold cache labels, fixed query sets, server configuration, network location, and result limits. Query-plan structures are intentionally retained as backend-specific provenance rather than forced into fake equivalence.
+
+### Tradeoffs and limitations
+
+- PostgreSQL is opt-in and requires a server, DSN, and schema privileges.
+- The PostgreSQL loader currently rematerializes a configured schema; use a dedicated schema and loader role.
+- Compose uses one local demo role. Production should separate a schema-owning loader role from a SELECT-only application role.
+- Cross-engine floating-point values are normalized, but larger scientific parity suites may need explicit tolerances.
+- SQLite audit and manifest stores remain local even when analytical execution uses PostgreSQL.
+- PostgreSQL metadata storage, high-availability connections, pooling, TLS policy, credential rotation, and migrations are future production hardening.
+- Dialect-specific reference curriculum queries using `julianday` remain SQLite examples; governed curated queries are portable.
+- Relationship-policy enforcement remains disabled.
+- No Spark, Airflow, Kubernetes, object storage, Parquet, Delta, or raw/bronze/silver/gold implementation was added.
+
+### How PostgreSQL prepares for the data lake and Spark
+
+PostgreSQL gives a future gold layer a production-style serving destination. It does not become the raw lake and does not replace transformation lineage. The next abstraction will define raw, bronze, silver, and gold storage contracts around batches, manifests, parent snapshots, validation, and publication.
+
+```mermaid
+flowchart LR
+ RAW["Future raw immutable batch"] --> BR["Future bronze snapshot"]
+ BR --> SI["Future silver validated snapshot"]
+ SI --> GO["Future gold governed snapshot"]
+ GO --> PG["PostgreSQL serving snapshot"]
+ GO --> SQ["SQLite compatibility snapshot"]
+ PG --> AN["Bounded analysis"]
+ SQ --> AN
+```
+
+Spark will later transform registered inputs into registered outputs using deterministic reviewed code. PostgreSQL proves the serving boundary now; it does not authorize arbitrary model-generated distributed code. Airflow and Kubernetes remain later concerns.
+
+#### What this means in plain English
+
+PostgreSQL is the future store counter where polished products can be served. The next milestone designs the warehouse shelves and quality stages. Spark may later move and process boxes; it does not decide what is safe to sell.
+
 ## Design decisions, limits, and production hardening
 
 SQLite makes the demo portable and inspectable; PostgreSQL should use a dedicated SELECT-only role and statement timeout. Curated SQL makes credential-free behavior reproducible. SQLGlot provides structural checks that regex cannot, though policy remains conservative. FastAPI supplies typed service contracts while Streamlit optimizes portfolio exploration.
