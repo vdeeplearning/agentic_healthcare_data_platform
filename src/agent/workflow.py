@@ -7,7 +7,8 @@ from src.agent.schemas import AnalysisPlan,AnalysisResponse,TraceEvent,Validatio
 from src.audit.repository import AuditStore,SQLiteAuditStore
 from src.database.backend import QueryBackend,SQLiteQueryBackend
 from src.database.models import ExecutionContext
-from src.database.lifecycle import DatasetIdentity
+from src.database.lifecycle import DatasetIdentity,DatasetSnapshot
+from src.metadata.repository import resolve_active_snapshot
 from src.demo.curated_questions import curated
 from src.agent.live_planner import generate_live_proposal
 from src.agent.planner import ExistingPlanner,Planner
@@ -20,13 +21,14 @@ from src.statistics.tools import run_statistical_tool
 
 class Analyst:
     """Orchestrates an allowlisted, bounded query pipeline."""
-    def __init__(self,db_path:Path,max_rows:int=1000,timeout_seconds:float=5,small_cell_threshold:int=10,model:str="gpt-5.6-sol",*,query_backend:QueryBackend|None=None,audit_store:AuditStore|None=None,planner:Planner|None=None,dataset_identity:DatasetIdentity|None=None):
+    def __init__(self,db_path:Path,max_rows:int=1000,timeout_seconds:float=5,small_cell_threshold:int=10,model:str="gpt-5.6-sol",*,query_backend:QueryBackend|None=None,audit_store:AuditStore|None=None,planner:Planner|None=None,dataset_identity:DatasetIdentity|None=None,dataset_snapshot:DatasetSnapshot|None=None):
         self.db_path=Path(db_path); self.max_rows=max_rows; self.timeout_seconds=timeout_seconds; self.small_cell_threshold=small_cell_threshold; self.model=model
         self.query_backend=query_backend or SQLiteQueryBackend(self.db_path)
         self._uses_default_audit_store=audit_store is None
         self.audit_store=audit_store or SQLiteAuditStore(self.db_path)
         self.planner=planner or ExistingPlanner(self.db_path,curated,generate_live_proposal)
         self.dataset_identity=dataset_identity
+        self.dataset_snapshot=dataset_snapshot or resolve_active_snapshot(self.db_path)
     def analyze(self,question:str,api_key:str|None=None,conversation_context:list[dict[str,Any]]|None=None)->AnalysisResponse:
         run_id=str(uuid.uuid4()); trace=[]; warnings=injection_warnings(question); risk,risk_warnings=classify_risk(question); warnings+=risk_warnings
         trace.append(TraceEvent(step="normalize_question",status="ok",detail="Whitespace and casing normalized for classification."))
@@ -70,8 +72,8 @@ class Analyst:
         if not validation.valid: return self._finish(run_id,question,"failed","SQL validation failed safely.",plan,sql,[],warnings,trace,validation)
         sql=validation.sql or sql
         try:
-            identity=self.dataset_identity
-            execution=self.query_backend.execute(sql,ExecutionContext(run_id=run_id,correlation_id=run_id,timeout_seconds=self.timeout_seconds,dataset_id=identity.dataset_id if identity else "synthetic-clinical",fixture_profile=identity.profile if identity else None,generator_version=identity.generator_version if identity else None),self.max_rows)
+            identity=self.dataset_identity; snapshot=self.dataset_snapshot
+            execution=self.query_backend.execute(sql,ExecutionContext(run_id=run_id,correlation_id=run_id,timeout_seconds=self.timeout_seconds,dataset_id=snapshot.dataset_id if snapshot else identity.dataset_id if identity else "synthetic-clinical",manifest_id=snapshot.manifest_id if snapshot else None,snapshot_id=snapshot.snapshot_id if snapshot else None,fixture_profile=identity.profile if identity else snapshot.materialization_parameters.get("fixture_profile") if snapshot else None,generator_version=identity.generator_version if identity else snapshot.provenance_metadata.get("generator_version") if snapshot else None),self.max_rows)
         except Exception as exc:
             trace.append(TraceEvent(step="execute_query",status="blocked",detail=str(exc))); return self._finish(run_id,question,"failed","Query execution failed safely.",plan,sql,[],warnings,trace,validation)
         rows=execution.rows; query_plan=execution.query_plan; elapsed=execution.execution_time_ms
@@ -122,5 +124,7 @@ class Analyst:
         return message[:500]
     def _finish(self,run_id,question,status,answer,plan,sql,rows,warnings,trace,validation,clarification=None,statistics=None,elapsed=None,query_plan=None):
         response=AnalysisResponse(run_id=run_id,status=status,question=question,answer=answer,clarification_question=clarification,plan=plan,sql=sql,columns=list(rows[0]) if rows else [],rows=rows,warnings=list(dict.fromkeys(warnings)),validation=validation,trace=trace,metric_definition=METRICS[plan.metric_name].model_dump() if plan and plan.metric_name in METRICS else None,statistics=statistics,execution_time_ms=elapsed,provenance={"database":str(self.db_path),"read_only":True,"query_plan":query_plan or [],"synthetic_data":True})
-        if self.db_path.exists() or not self._uses_default_audit_store: self.audit_store.write({"run_id":run_id,"question":question,"normalized_question":plan.normalized_question if plan else question.lower(),"model_name":self.model if any(event.detail.startswith("OpenAI") for event in trace) else "deterministic-demo","plan":plan.model_dump() if plan else None,"sql":sql,"validation_status":"passed" if validation and validation.valid else status,"execution_status":status,"row_count":len(rows),"execution_time_ms":elapsed,"statistical_tools":statistics,"warnings":warnings,"final_answer":answer})
+        snapshot=self.dataset_snapshot
+        audit_provenance={"dataset_id":snapshot.dataset_id,"manifest_id":snapshot.manifest_id,"snapshot_id":snapshot.snapshot_id,"backend_name":snapshot.backend_name,"schema_version":snapshot.schema_version,"loader_version":snapshot.loader_version} if snapshot else None
+        if self.db_path.exists() or not self._uses_default_audit_store: self.audit_store.write({"run_id":run_id,"question":question,"normalized_question":plan.normalized_question if plan else question.lower(),"model_name":self.model if any(event.detail.startswith("OpenAI") for event in trace) else "deterministic-demo","plan":plan.model_dump() if plan else None,"sql":sql,"validation_status":"passed" if validation and validation.valid else status,"execution_status":status,"row_count":len(rows),"execution_time_ms":elapsed,"statistical_tools":statistics,"warnings":warnings,"final_answer":answer,"provenance":audit_provenance})
         return response

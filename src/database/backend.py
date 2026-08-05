@@ -100,6 +100,7 @@ class SQLiteQueryBackend:
                 "database": str(self.path),
                 "read_only": True,
                 "dataset_id": context.dataset_id,
+                "manifest_id": context.manifest_id,
                 "snapshot_id": context.snapshot_id,
                 "fixture_profile": context.fixture_profile,
                 "generator_version": context.generator_version,

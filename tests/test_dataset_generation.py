@@ -45,7 +45,7 @@ def test_manifest_and_loader_validation(tmp_path):
     assert manifest.dataset_id == dataset_identity(17, "test").dataset_id
     assert manifest.fixture_profile == "test" and manifest.loader_backend == "sqlite"
     assert manifest.entity_row_counts["patients"] == 300 and manifest.entity_row_counts["encounters"] == 1200
-    assert manifest.validation_summary == {"foreign_key_errors": 0, "quality_measure_errors": 0}
+    assert manifest.validation_summary == {"foreign_key_errors": 0, "quality_measure_errors": 0, "row_count_mismatches": {}}
     assert manifest.stable_summaries["encounter_total_cost"] == 9387801.31
     assert manifest.source_type == "synthetic" and "not for clinical" in manifest.clinical_use_disclaimer
 

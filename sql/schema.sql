@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS audit_runs (
  run_id TEXT PRIMARY KEY, user_question TEXT NOT NULL, normalized_question TEXT NOT NULL, model_name TEXT NOT NULL,
  schema_version TEXT NOT NULL, analysis_plan_json TEXT, generated_sql TEXT, validation_status TEXT NOT NULL,
  execution_status TEXT NOT NULL, result_row_count INTEGER NOT NULL DEFAULT 0, execution_time_ms REAL,
- statistical_tools_json TEXT, warnings_json TEXT, final_answer TEXT, created_at TEXT NOT NULL
+ statistical_tools_json TEXT, warnings_json TEXT, final_answer TEXT, created_at TEXT NOT NULL,
+ provenance_json TEXT
 );
 COMMIT;
 

@@ -53,6 +53,7 @@ class ExecutionContext(BaseModel):
     actor_id: str | None = None
     tenant_id: str | None = None
     dataset_id: str | None = None
+    manifest_id: str | None = None
     snapshot_id: str | None = None
     fixture_profile: str | None = None
     generator_version: str | None = None
