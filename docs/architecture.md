@@ -10,3 +10,5 @@ The workflow now depends on narrow `QueryBackend`, `AuditStore`, and `Planner` c
 
 Synthetic construction follows a separate path: the versioned logical generator emits typed entity batches; `SyntheticDatasetLoader` implementations own schema creation, transactional persistence, validation, and manifests. The current `SQLiteSyntheticDatasetLoader` is the only loader. Dataset identity is derived from generation inputs, while load timestamps and backend details belong to the manifest. Relationship metadata is characterized in [relationship policy](relationship_policy.md) but remains intentionally unenforced.
 
+Durable lineage lives in a separate SQLite metadata sidecar governed by numbered transactional migrations. Logical manifests and concrete snapshots have distinct stable identities; snapshot activation occurs only after staging and validation. New audit rows may carry optional deterministic snapshot provenance, and `LineageResolver` joins a run to its snapshot and manifest internally. Missing or corrupt metadata falls back to legacy analysis behavior and never broadens SQL authority. See [version compatibility](version_compatibility.md) and ADRs 0009–0014.
+

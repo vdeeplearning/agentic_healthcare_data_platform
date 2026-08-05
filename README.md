@@ -607,6 +607,291 @@ print(result.manifest.model_dump_json(indent=2))
 
 The generated database remains synthetic and must never be replaced with PHI.
 
+## Durable manifests, snapshots, and answer lineage
+
+The previous foundation could calculate a manifest but held it only in a Python return value. This milestone makes logical manifests and concrete snapshots durable in a separate SQLite metadata repository. It also attaches an optional snapshot reference to new audit rows. Nothing about the question-to-answer contract changed: API models, routes, UI behavior, trace ordering, SQL safeguards, privacy suppression, metrics, statistics, curated answers, and the historical seed-command output remain compatible.
+
+```mermaid
+flowchart LR
+ G["Versioned generation inputs"] --> R["Logical record batches"]
+ R --> M["Logical dataset manifest"]
+ M --> L["Validated SQLite load"]
+ L --> S["Concrete SQLite snapshot"]
+ S --> A["Active snapshot pointer"]
+```
+
+### Dataset, manifest, snapshot, and load event
+
+A **dataset** is the logical collection of generated healthcare facts. A **manifest** is the durable description of those logical facts: generator and schema versions, seed, fixture profile, parameters, entity counts, stable summaries, source type, and disclaimer. A **snapshot** is one concrete materialization of that manifest in a particular backend with a particular loader and schema. A **load event** is the time-dependent attempt that created or failed to create a snapshot.
+
+The same logical test dataset can be loaded twice into the same SQLite target. Its dataset and manifest IDs remain stable, and the equivalent materialization resolves idempotently. The same dataset loaded into future PostgreSQL has the same dataset and manifest IDs but a different snapshot ID because the backend changed.
+
+#### What this means in plain English
+
+The dataset is a book's text. The manifest is the title and edition record. A snapshot is one printed copy—hardcover, paperback, or e-book. The print date describes a production event, but it does not rewrite the book's identity.
+
+#### What would happen without this layer?
+
+“The dataset” would ambiguously mean formulas, rows, a file, or a database server. An audit could point to `clinical.db` without proving which generation recipe or load produced it.
+
+### Why a loaded database is a snapshot
+
+SQLite contains one current materialization of logical records. Calling the file “the dataset” hides that another valid copy could exist in a restored SQLite file, future PostgreSQL, or a gold Parquet table. Snapshot metadata records loader/backend identity, schema, storage identity, materialization parameters, row counts, validation results, load status, supersession, and optional source batches.
+
+```mermaid
+flowchart TD
+ D["One logical dataset ID"] --> SS["SQLite snapshot"]
+ D --> PS["Future PostgreSQL serving snapshot"]
+ D --> GS["Future gold Parquet snapshot"]
+ SS --> SID1["Snapshot ID A"]
+ PS --> SID2["Snapshot ID B"]
+ GS --> SID3["Snapshot ID C"]
+```
+
+#### What this means in plain English
+
+One photograph can have copies on a laptop, phone, and archive drive. They depict the same image but are different stored copies with different formats and operational histories.
+
+#### What would happen without this layer?
+
+A future PostgreSQL refresh could overwrite the only known identity, making it impossible to distinguish the database queried yesterday from the database queried today.
+
+### Stable identity and volatile timestamps
+
+Dataset identity hashes seed, fixture profile, generator version, logical schema version, and major generation parameters. Manifest identity additionally describes stable logical output summaries. Snapshot identity hashes dataset and manifest IDs, backend, loader/version, analytics schema, storage identity, snapshot schema, and materialization parameters.
+
+Generation and load timestamps do **not** participate in stable hashes. Repeating the same load an hour later should not invent a new logical identity merely because the clock changed. Timestamp differences remain recorded as load-event metadata.
+
+```text
+same seed + profile + generator + parameters
+    = same dataset ID
+
+same dataset + manifest + backend + loader + materialization settings
+    = same snapshot ID
+
+change SQLite → PostgreSQL or loader 1.x → 2.x
+    = different snapshot ID
+```
+
+#### What this means in plain English
+
+A recipe is not a different recipe each time someone cooks it. The cooking time belongs on the kitchen log; ingredients and instructions define the recipe.
+
+#### What would happen without this layer?
+
+Retries would create endless identities for equivalent outputs, idempotency would be impossible, and Airflow or Spark reruns could not distinguish “same work repeated” from “different data produced.”
+
+### The manifest repository
+
+`ManifestStore` is separate from `QueryBackend`, `AuditStore`, generation, and loading. `SQLiteManifestStore` currently writes an adjacent `*.metadata.db` sidecar. It stores no API keys and avoids full local paths; storage identity is a bounded logical filename. Stable ordering makes listings reproducible.
+
+Registration rules are strict:
+
+- an identical manifest or snapshot registration returns the existing record;
+- reuse of an identifier with conflicting stable content raises `MetadataConflictError`;
+- a snapshot must reference a registered matching manifest;
+- incompatible versions are rejected;
+- unknown metadata migration versions are rejected rather than guessed.
+
+#### What this means in plain English
+
+The repository is a library catalog. Adding the same catalog card twice is harmless. Reusing the same catalog number for a different book is an error, not an update.
+
+#### What would happen without this layer?
+
+Lineage would disappear on process restart, or conflicting metadata could silently rewrite history after an answer had already been audited.
+
+### Failure-safe snapshot activation
+
+The SQLite loader no longer destroys the active target before knowing a replacement is valid. It creates a uniquely named staging database, loads batches transactionally, builds indexes and views, validates foreign keys and quality measures, registers an inactive snapshot, replaces the target, and only then marks the snapshot active. A backup bridges the small boundary between filesystem replacement and metadata activation.
+
+```mermaid
+flowchart TD
+ O["Old active snapshot and database"] --> ST["Build staging database"]
+ ST --> V{"Validation passed?"}
+ V -- "No" --> F["Record inactive failure; keep old active"]
+ V -- "Yes" --> RS["Register inactive validated snapshot"]
+ RS --> SW["Replace database with backup available"]
+ SW --> AC{"Metadata activation succeeded?"}
+ AC -- "Yes" --> N["New active; old superseded"]
+ AC -- "No" --> RB["Restore old database and active metadata"]
+```
+
+A failed generation registers no completed manifest. A failed validation may leave an inactive failure record, but it cannot replace the active snapshot. Partial migration or registration transactions roll back.
+
+#### What this means in plain English
+
+Do not throw away the working bridge until the replacement bridge has passed inspection and is ready to open. If inspection fails, traffic continues over the old bridge.
+
+#### What would happen without this layer?
+
+A random generation exception, disk error, or failed invariant could leave no usable demo database while metadata incorrectly advertised a bad load as current.
+
+### Metadata schema migrations
+
+Platform metadata has its own numbered migration history. Migration 1 creates manifests; migration 2 creates snapshots, indexes, and the one-active-snapshot constraint. Each unapplied migration runs under `BEGIN IMMEDIATE` and records its version only after success. Startup can safely apply migrations repeatedly. An unknown future version stops processing.
+
+```mermaid
+flowchart LR
+ OP["Open metadata store"] --> MT["Ensure migration ledger"]
+ MT --> CV["Read applied versions"]
+ CV --> FV{"Unknown future version?"}
+ FV -- "Yes" --> STOP["Stop safely"]
+ FV -- "No" --> NX["Begin next migration"]
+ NX --> SQL["Apply statements"]
+ SQL --> OK{"All succeeded?"}
+ OK -- "No" --> ROLLBACK["Rollback version"]
+ OK -- "Yes" --> REC["Record version and commit"]
+ REC --> NX
+```
+
+The healthcare schema is not being converted into a general migration framework. The current mechanism covers platform metadata; the audit table receives one additive nullable provenance column with an idempotent legacy upgrade.
+
+#### What this means in plain English
+
+A migration is a numbered renovation instruction. The repository remembers which renovations succeeded. If step two fails, it undoes step two instead of leaving half a wall removed.
+
+#### What would happen without this layer?
+
+Two installations could claim to use the same metadata schema while having different tables or columns, and a newer application could misread an older or future database.
+
+### Backward-compatible audit provenance
+
+New audit rows may contain `provenance_json` with deterministic `dataset_id`, `manifest_id`, `snapshot_id`, backend, analytics schema, and loader version. Existing columns are unchanged. Old audit tables are upgraded additively; old rows return `NULL` provenance and remain readable. If metadata is absent or corrupt, analysis runs in legacy-compatible mode and gains no additional query permission.
+
+The model never supplies these identifiers. `Analyst` resolves the active snapshot from the deterministic sidecar and passes it through internal execution context.
+
+```mermaid
+flowchart RL
+ ANS["Evidence-grounded answer"] --> RUN["Audit run ID"]
+ RUN --> PROV["Optional provenance IDs"]
+ PROV --> SNAP["Snapshot record"]
+ SNAP --> MAN["Manifest record"]
+ MAN --> GEN["Generator version, seed, profile, parameters"]
+ SNAP --> LOAD["Loader, backend, schema, counts, validation"]
+```
+
+#### What this means in plain English
+
+The audit now has a receipt number for the exact warehouse shipment it used. Older receipts without that number are still valid historical documents; they simply cannot provide the newer lookup.
+
+#### What would happen without this layer?
+
+The project could reproduce SQL but not prove which concrete database state produced the rows, especially after refreshes.
+
+### Resolving an answer back to generation
+
+`LineageResolver` starts with a run ID, reads its optional provenance, loads the snapshot, then loads the manifest. The result explains which snapshot was queried; the dataset and manifest IDs; generator version, seed, profile, and parameters; loader/backend/schema; row counts; and validation summary.
+
+Example journey:
+
+```text
+run 7ca…
+  → snapshot-41d… (SQLite, loader 1.0.0, active at analysis time)
+  → manifest-c24…
+  → synthetic-clinical-73c…
+  → generator 1.0.0, seed 17, test profile, 300 patients / 1,200 encounters
+```
+
+No public endpoint was added because the internal lineage model should mature before becoming another compatibility surface. Existing `/runs` endpoints remain additive-compatible through the nullable audit field.
+
+#### What this means in plain English
+
+Given a statement in the UI, a reviewer can follow breadcrumbs backward to the recipe and load inspection that produced its evidence.
+
+#### What would happen without this layer?
+
+“We ran the same query” would not guarantee reproduction because the underlying rows might have come from another refresh.
+
+### Version compatibility and schema evolution
+
+The project distinguishes change types instead of treating every version bump alike. The current policy accepts supported major versions and returns whether regeneration or rematerialization is required.
+
+- A backward-compatible optional manifest field needs neither regeneration nor rematerialization.
+- A generator formula or RNG-order change needs regeneration and a generator version change.
+- An incompatible logical-schema change needs regeneration and rematerialization.
+- A loader-only refactor with identical output does not change dataset identity; policy may request rematerialization.
+- A loader major or physical-format change needs a new snapshot.
+- An index or analytical-view change affects the analytical snapshot, not logical record identity.
+- A metric-definition change belongs to metric governance and may require recomputing gold outputs without regenerating source records.
+- Metadata schema versions use exact numbered migrations.
+
+See [version compatibility rules](docs/version_compatibility.md).
+
+#### What this means in plain English
+
+Changing the book's text, changing the printing press, adding a library index, and changing how a reviewer scores the book are four different changes. They should not all force the same work.
+
+#### What would happen without this layer?
+
+The system would either reject harmless upgrades or combine incompatible generators, loaders, and schemas until an analytical discrepancy appeared.
+
+### Current SQLite architecture
+
+```mermaid
+flowchart LR
+ CLI["Unchanged seed CLI"] --> LG["Logical generator"]
+ LG --> SL["Write-authorized SQLite loader"]
+ SL --> ADB["SQLite analytics database"]
+ SL --> MS["SQLite metadata sidecar"]
+ API["FastAPI / Streamlit / CLI analyst"] --> QB["Read-only SQLite QueryBackend"]
+ QB --> ADB
+ API --> AUD["SQLite audit store"]
+ AUD --> ADB
+ API -. "resolve active snapshot" .-> MS
+```
+
+The metadata sidecar is separate from the analytical query interface even when it sits beside the same local database. It is ignored by the SQL catalog and is not sent to the model.
+
+#### What this means in plain English
+
+There are now three sets of keys: one stocks the database, one reads approved analytical data, and one maintains catalog/lineage cards. The interactive agent only gets the reading capability.
+
+### Preparing for PostgreSQL and the lakehouse
+
+The boundaries now support a future PostgreSQL serving snapshot without changing dataset identity or central safety. A PostgreSQL loader would register a distinct snapshot using its backend, loader, schema, and storage identity. A SELECT-only PostgreSQL query backend would still have to pass the shared backend contract.
+
+Future lakehouse lineage is expected to look like this:
+
+```mermaid
+flowchart LR
+ RAW["Raw source batch"] --> BR["Bronze snapshot + ingestion metadata"]
+ BR --> SI["Silver snapshot + quality results"]
+ SI --> GO["Gold governed snapshot"]
+ GO --> PG["PostgreSQL serving snapshot"]
+ PG --> AG["Validated agent analysis"]
+ AG --> AU["Audit run"]
+ AU -. "lineage" .-> PG
+ PG -. "lineage" .-> GO
+ GO -. "lineage" .-> SI
+ SI -. "lineage" .-> BR
+ BR -. "lineage" .-> RAW
+```
+
+A future Spark job will consume a registered input snapshot and produce a new deterministic output snapshot with transformation-version metadata. It will not execute arbitrary AI-generated code. Airflow will schedule jobs and record batch/DAG-run identifiers as load-event provenance; it will not execute interactive `/analyze`. Kubernetes will eventually deploy services and jobs, but it is unrelated to the meaning of dataset identity or lineage.
+
+#### What this means in plain English
+
+Spark is a future factory, Airflow is the future shift scheduler, PostgreSQL is a future storefront, and Kubernetes is a future building manager. The manifest and snapshot records are the inventory ledger shared across them.
+
+#### What would happen without this layer?
+
+Each platform would create its own disconnected job IDs, leaving no reliable chain from a final answer back through gold, silver, bronze, and raw inputs.
+
+### Current limitations and production hardening
+
+- The manifest repository is a local SQLite sidecar, not a concurrent production metadata service.
+- Filesystem replacement and metadata activation are coordinated with backup restoration, not one cross-file ACID transaction.
+- Failed validation is represented as an inactive snapshot; a separate load-attempt/event table may later capture richer retry history.
+- Manifest identity uses versioned inputs and stable summaries, not a checksum of every row.
+- Lineage is internal; no new public endpoint was added.
+- Audit provenance is JSON for compatibility rather than a database-enforced foreign key.
+- Snapshot activation is scoped by backend and bounded storage identity.
+- Key management, access control, encryption, immutable/tamper-evident metadata, retention, replication, disaster recovery, and concurrent-writer leasing remain production work.
+- Relationship-policy enforcement remains deliberately disabled.
+
+For local verification, the existing commands remain valid. The metadata sidecar is created automatically beside a generated database and is covered by `data/generated/*.db*` in `.gitignore`.
+
 ## Design decisions, limits, and production hardening
 
 SQLite makes the demo portable and inspectable; PostgreSQL should use a dedicated SELECT-only role and statement timeout. Curated SQL makes credential-free behavior reproducible. SQLGlot provides structural checks that regex cannot, though policy remains conservative. FastAPI supplies typed service contracts while Streamlit optimizes portfolio exploration.

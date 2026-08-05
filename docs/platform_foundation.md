@@ -29,6 +29,8 @@ The generator now emits versioned, typed logical records in bounded batches. Fix
 
 Every future query backend runs the shared contract suite for normalized catalogs and types, read-only enforcement, safe failures, resource controls, query plans, row normalization, truncation, and provenance. Query execution and data loading remain separate authority boundaries.
 
+Manifests and snapshots are now durable in a migrated SQLite metadata sidecar. A manifest describes logical records; a snapshot describes one materialization. The SQLite loader stages and validates replacements before activation, while optional audit provenance connects analysis runs to snapshot and manifest IDs. This metadata remains outside the analytical catalog and outside model control.
+
 PySpark will eventually implement reviewed, versioned transformations and data-quality rules. Models will not generate or execute arbitrary Spark code. PostgreSQL will later be an opt-in serving adapter using a SELECT-only role and server-side statement timeout; SQLite remains available for parity and rollback.
 
 Airflow will schedule ingestion, Spark transformations, data-quality checks, gold publication, benchmarks, and failure handling. It will not execute the latency-sensitive interactive `/analyze` workflow. Kubernetes is deliberately last, after service boundaries, readiness checks, idempotency, state externalization, observability, and resource requirements are demonstrated.
