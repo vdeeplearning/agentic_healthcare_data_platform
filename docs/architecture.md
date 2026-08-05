@@ -1,14 +1,134 @@
-# Architecture
+# Architecture and diagrams
 
-The system divides probabilistic interpretation from deterministic authority. A typed plan must precede SQL. The SQLGlot validator owns permission to query; the model never owns a database handle. SQLite is opened in URI `mode=ro` with `query_only=ON`, a progress handler enforces time, and results are capped. The current credential-free implementation uses curated planners; the live-model extension point must emit the same `AnalysisPlan` and SQL candidate contracts.
+Each diagram has a short summary for readers who do not use Mermaid rendering.
 
-The graph is bounded: clarification and denial terminate immediately; SQL has at most two repair opportunities by design (the baseline performs zero automatic repairs); result repair is limited to one; answer validation permits one evidence-only rewrite. Trace events expose decisions, not hidden reasoning.
+## 1. Executive end-to-end architecture
 
-## Platform seams
+The analyst authorizes read-only analytics over governed serving data; lake processing, orchestration, and deployment remain separate layers.
 
-The workflow now depends on narrow `QueryBackend`, `AuditStore`, and `Planner` contracts. SQLite implementations preserve the original behavior and remain the only enabled implementations. Catalog metadata and query results use engine-neutral internal models, while deterministic SQL authorization, privacy controls, metric governance, result checks, statistics, and answer grounding remain centralized. See [distributed platform foundation](platform_foundation.md) and the [architecture decisions](adr/).
+```mermaid
+flowchart LR
+ Q["Question"] --> AG["Bounded analyst"] --> SAFE["Deterministic authorization"] --> DB["Serving database"] --> ANS["Grounded answer"]
+ SRC["Synthetic source"] --> RAW["Raw"] --> BR["Bronze"] --> SI["Silver"] --> GO["Gold"] --> DB
+ AF["Airflow"] --> RAW
+ AF --> BR
+ K["Kubernetes"] -. "deploys" .-> AG
+ K -. "deploys" .-> AF
+```
 
-Synthetic construction follows a separate path: the versioned logical generator emits typed entity batches; `SyntheticDatasetLoader` implementations own schema creation, transactional persistence, validation, and manifests. The current `SQLiteSyntheticDatasetLoader` is the only loader. Dataset identity is derived from generation inputs, while load timestamps and backend details belong to the manifest. Relationship metadata is characterized in [relationship policy](relationship_policy.md) but remains intentionally unenforced.
+## 2. Agent safety and authorization flow
 
-Durable lineage lives in a separate SQLite metadata sidecar governed by numbered transactional migrations. Logical manifests and concrete snapshots have distinct stable identities; snapshot activation occurs only after staging and validation. New audit rows may carry optional deterministic snapshot provenance, and `LineageResolver` joins a run to its snapshot and manifest internally. Missing or corrupt metadata falls back to legacy analysis behavior and never broadens SQL authority. See [version compatibility](version_compatibility.md) and ADRs 0009–0014.
+The model proposes; deterministic policy can deny, clarify, or authorize bounded execution.
+
+```mermaid
+flowchart TD
+ Q["Question"] --> RISK{"Privacy risk"}
+ RISK -->|"high"| DENY["Deny"]
+ RISK -->|"ambiguous"| CLARIFY["Request clarification"]
+ RISK -->|"allowed"| PLAN["Typed plan"] --> SQL["SQL candidate"] --> AST{"AST + schema + complexity valid?"}
+ AST -->|"no"| STOP["Stop safely"]
+ AST -->|"yes"| READ["Read-only bounded execution"] --> CHECK["Result + grounding checks"] --> ANSWER["Evidence-grounded answer"]
+```
+
+## 3. Medallion pipeline
+
+Every transition publishes only validated candidates and preserves the previous active snapshot on failure.
+
+```mermaid
+flowchart LR
+ S["Versioned source batch"] --> R["Raw immutable evidence"] --> B["Bronze ingestion metadata"] --> SI["Silver typed + deduplicated"] --> G["Gold analytics-ready"] --> P["Serving snapshot"]
+ B -. "quality failure" .-> KEEP["Keep prior active snapshot"]
+ SI -. "quality failure" .-> KEEP
+ G -. "quality failure" .-> KEEP
+```
+
+## 4. Python and PySpark parity
+
+Two physical engines implement one logical contract and compare normalized outputs.
+
+```mermaid
+flowchart TD
+ INPUT["Same source snapshot"] --> PY["Canonical Python engine"]
+ INPUT --> SP["Optional PySpark engine"]
+ PY --> PN["Normalized logical rows"]
+ SP --> SN["Normalized logical rows"]
+ PN --> CMP{"Schemas, counts, hashes, rejects, gates, lineage equal?"}
+ SN --> CMP
+ CMP --> REPORT["Machine-readable parity report"]
+```
+
+## 5. Airflow DAG
+
+Airflow coordinates existing stage functions; it contains no transformation or policy logic.
+
+```mermaid
+flowchart LR
+ START --> SOURCE["Generate source"] --> WAIT["Source sensor"] --> RAW --> B["Bronze"] --> BG["Bronze gate"] --> S["Silver"] --> SG["Silver gate"] --> G["Gold"] --> GG["Gold gate"] --> PUB["Publish"] --> VERIFY["Verify"] --> SUCCESS
+```
+
+## 6. Serving backend abstraction
+
+One validated-query contract supports default SQLite and optional PostgreSQL without moving authorization into a driver.
+
+```mermaid
+flowchart TD
+ VALID["Validated SQL"] --> QB["QueryBackend contract"]
+ QB --> SQ["SQLite read-only backend"]
+ QB --> PG["Optional PostgreSQL backend"]
+ SQ --> N["Normalized result + provenance"]
+ PG --> N
+```
+
+## 7. Audit and lineage
+
+An answer resolves through immutable platform metadata back to its source batch.
+
+```mermaid
+flowchart LR
+ A["Answer"] --> AU["Audit run"] --> SERVE["Serving snapshot"] --> GOLD --> SILVER --> BRONZE --> RAW --> BATCH["Source batch"]
+ SERVE -.-> ORCH["Optional Airflow run"]
+ GOLD -.-> APP["Optional Spark application"]
+```
+
+## 8. Kubernetes topology
+
+Kubernetes deploys the existing services with internal networking and persistent claims.
+
+```mermaid
+flowchart TD
+ ING["Optional Ingress"] --> UIS["UI ClusterIP"] --> UI["Streamlit Deployment"]
+ ING --> APIS["API ClusterIP"] --> API["FastAPI Deployment"]
+ ING --> AWS["Airflow ClusterIP"] --> AW["Airflow webserver"]
+ AS["Airflow scheduler"] --> LAKE["Lake PVC"]
+ AS --> PG["PostgreSQL StatefulSet"]
+ SP["Suspended Spark Job"] --> LAKE
+```
+
+## 9. Verification boundary
+
+Green local paths executed; optional external runtimes stop at contract or static validation in this environment.
+
+```mermaid
+flowchart LR
+ LIVE["Live: Python + SQLite + API + UI + local lake"] --> TESTED["Contract-tested: PostgreSQL + Spark + Airflow"] --> STATIC["Statically validated: Kubernetes + Compose"] --> PENDING["Pending environment-specific live runs"]
+```
+
+## 10. Project evolution
+
+Each milestone established contracts before adding a larger runtime.
+
+```mermaid
+timeline
+ title Contract-first platform evolution
+ section Analytics
+ Bounded SQL analyst : privacy : validation : audit
+ section Data
+ Versioned datasets : snapshots : raw/bronze/silver/gold
+ section Scale
+ PostgreSQL boundary : optional PySpark parity
+ section Operations
+ Optional Airflow : Kubernetes manifests
+ section Portfolio
+ One-command demo : guided walkthrough : release package
+```
 
