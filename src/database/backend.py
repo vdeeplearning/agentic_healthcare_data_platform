@@ -14,6 +14,7 @@ from src.database.models import (
     ColumnMetadata,
     ExecutionContext,
     QueryExecutionResult,
+    QueryBackendError,
     RelationMetadata,
 )
 
@@ -61,7 +62,7 @@ class SQLiteQueryBackend:
             for name, kind in objects:
                 columns = [
                     ColumnMetadata(
-                        name=row[1], data_type=row[2] or "", nullable=not bool(row[3]), primary_key=bool(row[5])
+                        name=row[1], data_type=(row[2] or "").lower(), nullable=not bool(row[3]), primary_key=bool(row[5])
                     )
                     for row in connection.execute(f'PRAGMA table_info("{name}")')
                 ]
@@ -86,8 +87,8 @@ class SQLiteQueryBackend:
                 raw_rows = cursor.fetchmany(max_rows + 1)
                 truncated = len(raw_rows) > max_rows
                 rows = [dict(zip(columns, row)) for row in raw_rows[:max_rows]]
-        except sqlite3.Error:
-            raise
+        except sqlite3.Error as exc:
+            raise QueryBackendError(str(exc), backend_name=self.name, code="cancelled" if "interrupted" in str(exc).lower() else "execution_failed") from exc
         return QueryExecutionResult(
             columns=columns,
             rows=rows,
@@ -100,5 +101,8 @@ class SQLiteQueryBackend:
                 "read_only": True,
                 "dataset_id": context.dataset_id,
                 "snapshot_id": context.snapshot_id,
+                "fixture_profile": context.fixture_profile,
+                "generator_version": context.generator_version,
+                "schema_version": "1.0",
             },
         )
