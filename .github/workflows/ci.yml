@@ -10,6 +10,11 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: python -m src.database.seed --patients 500 --encounters 2000
       - run: python scripts/validate_kubernetes.py
+      - run: python scripts/validate_docs.py
+      - run: bash -n scripts/demo.sh scripts/reset_demo.sh
+      - shell: pwsh
+        run: Get-Content scripts/demo.ps1,scripts/reset_demo.ps1 -Raw | Out-Null
+      - run: python -m scripts.demo --smoke
       - run: pytest --cov=src --cov-report=term-missing
       - run: python -m src.cli benchmark --limit 5
 

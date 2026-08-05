@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     airflow_retries: int = 2
     airflow_retry_delay_seconds: int = 300
     airflow_serving_path: Path = Path("data/generated/airflow-serving.db")
+    portfolio_mode: bool = False
     demo_mode: bool = True
     seed: int = 42
     query_timeout_seconds: float = 5.0

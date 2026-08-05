@@ -24,6 +24,7 @@ airflow-scheduler.pid
 standalone_admin_password.txt
 logs/dag_id=*/
 data/airflow/
+data/demo/
 *.log
 *.egg-info/
 .streamlit/secrets.toml

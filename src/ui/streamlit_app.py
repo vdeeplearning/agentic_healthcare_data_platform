@@ -9,6 +9,10 @@ from src.database.connection import connect_read_only,schema_catalog
 from src.database.seed import generate_database
 from src.demo.curated_questions import EXAMPLES
 from src.metrics.registry import METRICS
+from src.audit.repository import SQLiteAuditStore
+from src.metadata.lineage import LineageResolver
+from src.metadata.repository import SQLiteManifestStore,metadata_path_for
+from src.lake.store import LocalFilesystemLakeStore
 
 st.set_page_config(page_title="Agentic Clinical SQL Analyst",page_icon="🛡️",layout="wide")
 settings=get_settings()
@@ -17,6 +21,12 @@ if not settings.db_path.exists():
 st.title("Agentic Clinical SQL Analyst")
 st.info("Synthetic data only • Portfolio and education use • Not a clinical decision system")
 st.caption("Natural language → typed plan → validated SQL AST → query-plan review → read-only execution → deterministic result checks → grounded answer")
+if settings.portfolio_mode:
+    st.success("Portfolio walkthrough: choose a curated question, inspect deterministic authorization, then trace the answer to its source batch.")
+    status_columns=st.columns(3)
+    status_columns[0].metric("Transformation engine",settings.lake_transform_engine.title())
+    status_columns[1].metric("Serving backend",settings.database_backend.title())
+    status_columns[2].metric("Data classification","Synthetic only")
 with st.sidebar:
     st.header("Execution")
     st.subheader("OpenAI connection")
@@ -39,7 +49,13 @@ with st.sidebar:
         counts={table:c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in ("patients","hospitals","providers","encounters")}
     st.metric("Synthetic encounters",f"{counts['encounters']:,}"); st.metric("Hospitals",counts["hospitals"])
 st.subheader("Ask a question")
-question=st.text_area("Healthcare analytics question",value=EXAMPLES[0],height=90)
+if settings.portfolio_mode:
+    st.caption("Guided questions")
+    question_columns=st.columns(3)
+    for index,example in enumerate(EXAMPLES[:3]):
+        if question_columns[index].button(f"Question {index+1}",help=example,width="stretch"):
+            st.session_state["question_input"]=example
+question=st.text_area("Healthcare analytics question",value=EXAMPLES[0],height=90,key="question_input")
 history=st.session_state.setdefault("conversation_history",[])
 if history:
     st.caption(f"Follow-up context enabled • {len(history)} previous turn(s)")
@@ -61,7 +77,12 @@ if st.button("Analyze",type="primary",width="stretch"):
         "validated_sql":turn.get("sql"),
         "verified_result_sample":turn.get("rows",[])[:10],
     } for turn in history[-5:]]
-    result=Analyst(settings.db_path,settings.max_rows,settings.query_timeout_seconds,settings.small_cell_threshold).analyze(question,api_key or None,context)
+    metadata_path=settings.metadata_path or metadata_path_for(settings.db_path)
+    snapshot=None
+    if metadata_path.exists():
+        try: snapshot=SQLiteManifestStore(metadata_path).get_active_snapshot("sqlite",settings.db_path.name)
+        except Exception: snapshot=None
+    result=Analyst(settings.db_path,settings.max_rows,settings.query_timeout_seconds,settings.small_cell_threshold,dataset_snapshot=snapshot).analyze(question,api_key or None,context)
     st.session_state["last_result"]=result
     history.append({"question":question,"answer":result.answer,"plan":result.plan.model_dump() if result.plan else None,"sql":result.sql,"rows":result.rows[:10],"status":result.status})
     st.session_state["conversation_history"]=history[-10:]
@@ -75,12 +96,18 @@ if result:
         numeric=[c for c in frame.columns if pd.api.types.is_numeric_dtype(frame[c])]
         labels=[c for c in frame.columns if c not in numeric]
         if labels and numeric: st.plotly_chart(px.bar(frame.head(20),x=labels[0],y=numeric[-1]),width="stretch")
-    tabs=st.tabs(["Metric","SQL","Validation","Audit trace","Provenance"])
+    tabs=st.tabs(["Metric","Plan + SQL","Safety checks","Audit trace","Provenance","Lineage"])
     with tabs[0]: st.json(result.metric_definition or {})
-    with tabs[1]: st.code(result.sql or "No SQL generated",language="sql")
+    with tabs[1]: st.json(result.plan.model_dump(mode="json") if result.plan else {}); st.code(result.sql or "No SQL generated",language="sql")
     with tabs[2]: st.json(result.validation.model_dump() if result.validation else {}); [st.warning(w) for w in result.warnings]
     with tabs[3]: st.dataframe(pd.DataFrame([e.model_dump() for e in result.trace]),hide_index=True,width="stretch"); st.caption(f"Audit run ID: {result.run_id}")
     with tabs[4]: st.json(result.provenance)
+    with tabs[5]:
+        metadata_path=settings.metadata_path or metadata_path_for(settings.db_path)
+        try:
+            lineage=LineageResolver(SQLiteAuditStore(settings.db_path),SQLiteManifestStore(metadata_path),LocalFilesystemLakeStore(settings.lake_root)).resolve_run(result.run_id)
+            st.json(lineage or {"status":"No snapshot lineage is attached to this run."})
+        except Exception as exc: st.info(f"Lineage is unavailable for this local run: {type(exc).__name__}")
 guide_tab,schema_tab,registry_tab=st.tabs(["Dataset Guide","Schema Explorer","Metric Registry"])
 with guide_tab:
     st.subheader("What this synthetic dataset contains")
