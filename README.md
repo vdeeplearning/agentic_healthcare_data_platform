@@ -459,7 +459,7 @@ A successful process exit would be the only evidence of a good load. Operators c
 
 `QueryBackend` is the narrow read-only boundary used by interactive analysis. Its reusable test suite checks catalog normalization, tables and views, prohibited objects, capabilities, read-only enforcement, normalized rows and nulls, numeric types, query plans, execution timing, row truncation, timeout behavior, structured failures, and provenance.
 
-The contract does not allow a backend to approve SQL. Central SQL policy still parses the candidate, rejects unsafe statements, checks schema and complexity, and inserts a row limit before execution. A future PostgreSQL adapter must pass the same shared tests plus its own engine-specific tests.
+The contract does not allow a backend to approve SQL. Central SQL policy still parses the candidate, rejects unsafe statements, checks schema and complexity, and inserts a row limit before execution. The optional PostgreSQL adapter is held to the same shared contract tests plus engine-specific integration tests.
 
 #### What this means in plain English
 
@@ -522,19 +522,19 @@ flowchart LR
  RAW --> BR["Bronze: ingested plus batch metadata"]
  BR --> SI["Silver: typed, cleaned, deduplicated, validated"]
  SI --> GO["Gold: analytics-ready governed metrics"]
- GO --> PG["Future PostgreSQL serving"]
+ GO --> PG["Optional PostgreSQL serving"]
  GO --> SQ["SQLite compatibility fixture"]
  PG --> QA["Validated interactive analysis"]
  SQ --> QA
 ```
 
-PostgreSQL will later add production-style serving, using separate SELECT-only and loading credentials. The same logical batches can also be serialized as raw JSON/CSV, Parquet, or Spark DataFrames. Raw preserves the immutable source; bronze adds ingestion metadata; silver applies deterministic typing, cleanup, deduplication, and validation; gold exposes reviewed analytical tables and registered metric materializations.
+PostgreSQL provides an optional production-style serving path, with separate query and loading boundaries; SQLite remains the default. The same logical batches move through raw, bronze, silver, and gold snapshots using canonical JSON Lines in the Python reference engine or Parquet plus a canonical logical sidecar in the optional Spark engine. Raw preserves the immutable source; bronze adds ingestion metadata; silver applies deterministic typing, cleanup, deduplication, and validation; gold exposes reviewed analytical tables and registered metric materializations.
 
-PySpark will run reviewed transformation code over versioned records. It will not execute arbitrary model-generated Python or Spark expressions. Airflow will schedule ingestion, transformations, quality gates, publication, and benchmarks; it will not handle latency-sensitive `/analyze` requests. Kubernetes remains last because deployment orchestration is useful only after service boundaries, state, health checks, idempotency, resource requirements, and operational ownership are established.
+PySpark runs reviewed transformation code over versioned records when the optional engine is selected. It does not execute arbitrary model-generated Python or Spark expressions. The optional Airflow DAG schedules ingestion, transformations, quality gates, publication, serving-snapshot creation, and verification; it does not handle latency-sensitive `/analyze` requests. Kubernetes remains deferred because deployment orchestration is useful only after service boundaries, external state, health checks, idempotency, resource requirements, and operational ownership are established.
 
 #### What this means in plain English
 
-The project is preparing standardized boxes, labels, and inspection rules before buying a larger warehouse and delivery fleet. PostgreSQL, Spark, Airflow, and Kubernetes will later fill specific roles; none should redefine the data or weaken permission checks.
+The project has standardized boxes, labels, and inspection rules, then added optional PostgreSQL serving, Spark processing, and Airflow scheduling behind those contracts. Kubernetes remains a future building manager; none of these systems may redefine the data or weaken permission checks.
 
 #### What would happen without this layer?
 
@@ -624,7 +624,7 @@ flowchart LR
 
 A **dataset** is the logical collection of generated healthcare facts. A **manifest** is the durable description of those logical facts: generator and schema versions, seed, fixture profile, parameters, entity counts, stable summaries, source type, and disclaimer. A **snapshot** is one concrete materialization of that manifest in a particular backend with a particular loader and schema. A **load event** is the time-dependent attempt that created or failed to create a snapshot.
 
-The same logical test dataset can be loaded twice into the same SQLite target. Its dataset and manifest IDs remain stable, and the equivalent materialization resolves idempotently. The same dataset loaded into future PostgreSQL has the same dataset and manifest IDs but a different snapshot ID because the backend changed.
+The same logical test dataset can be loaded twice into the same SQLite target. Its dataset and manifest IDs remain stable, and the equivalent materialization resolves idempotently. The same dataset loaded into optional PostgreSQL serving has the same dataset and manifest IDs but a different snapshot ID because the backend changed.
 
 #### What this means in plain English
 
@@ -636,13 +636,13 @@ The dataset is a book's text. The manifest is the title and edition record. A sn
 
 ### Why a loaded database is a snapshot
 
-SQLite contains one current materialization of logical records. Calling the file “the dataset” hides that another valid copy could exist in a restored SQLite file, future PostgreSQL, or a gold Parquet table. Snapshot metadata records loader/backend identity, schema, storage identity, materialization parameters, row counts, validation results, load status, supersession, and optional source batches.
+SQLite contains one current materialization of logical records. Calling the file “the dataset” hides that another valid copy can exist in a restored SQLite file, optional PostgreSQL serving, or a Spark gold Parquet snapshot. Snapshot metadata records loader/backend identity, schema, storage identity, materialization parameters, row counts, validation results, load status, supersession, and optional source batches.
 
 ```mermaid
 flowchart TD
  D["One logical dataset ID"] --> SS["SQLite snapshot"]
- D --> PS["Future PostgreSQL serving snapshot"]
- D --> GS["Future gold Parquet snapshot"]
+ D --> PS["Optional PostgreSQL serving snapshot"]
+ D --> GS["Optional Spark gold Parquet snapshot"]
  SS --> SID1["Snapshot ID A"]
  PS --> SID2["Snapshot ID B"]
  GS --> SID3["Snapshot ID C"]
@@ -654,7 +654,7 @@ One photograph can have copies on a laptop, phone, and archive drive. They depic
 
 #### What would happen without this layer?
 
-A future PostgreSQL refresh could overwrite the only known identity, making it impossible to distinguish the database queried yesterday from the database queried today.
+A PostgreSQL refresh could overwrite the only known identity without snapshot tracking, making it impossible to distinguish the database queried yesterday from the database queried today.
 
 ### Stable identity and volatile timestamps
 
@@ -847,11 +847,11 @@ The metadata sidecar is separate from the analytical query interface even when i
 
 There are now three sets of keys: one stocks the database, one reads approved analytical data, and one maintains catalog/lineage cards. The interactive agent only gets the reading capability.
 
-### Preparing for PostgreSQL and the lakehouse
+### PostgreSQL and lakehouse lineage
 
-The boundaries now support a future PostgreSQL serving snapshot without changing dataset identity or central safety. A PostgreSQL loader would register a distinct snapshot using its backend, loader, schema, and storage identity. A SELECT-only PostgreSQL query backend would still have to pass the shared backend contract.
+The boundaries support optional PostgreSQL serving snapshots without changing dataset identity or central safety. The PostgreSQL loader registers a distinct snapshot using its backend, loader, schema, and storage identity. The PostgreSQL query backend remains opt-in and is held to the shared backend contract.
 
-Future lakehouse lineage is expected to look like this:
+Implemented lakehouse lineage follows this shape:
 
 ```mermaid
 flowchart LR
@@ -868,11 +868,11 @@ flowchart LR
  BR -. "lineage" .-> RAW
 ```
 
-A future Spark job will consume a registered input snapshot and produce a new deterministic output snapshot with transformation-version metadata. It will not execute arbitrary AI-generated code. Airflow will schedule jobs and record batch/DAG-run identifiers as load-event provenance; it will not execute interactive `/analyze`. Kubernetes will eventually deploy services and jobs, but it is unrelated to the meaning of dataset identity or lineage.
+The optional Spark engine consumes a registered input snapshot and produces a deterministic output snapshot with transformation-version metadata. It does not execute arbitrary AI-generated code. The optional Airflow DAG schedules jobs and records its DAG run ID as orchestration provenance; it does not execute interactive `/analyze`. Kubernetes may eventually deploy services and jobs, but it is unrelated to the meaning of dataset identity or lineage.
 
 #### What this means in plain English
 
-Spark is a future factory, Airflow is the future shift scheduler, PostgreSQL is a future storefront, and Kubernetes is a future building manager. The manifest and snapshot records are the inventory ledger shared across them.
+Spark is the optional factory, Airflow is the optional shift scheduler, PostgreSQL is the optional storefront, and Kubernetes remains a future building manager. The manifest and snapshot records are the inventory ledger shared across the implemented components.
 
 #### What would happen without this layer?
 
@@ -1094,28 +1094,28 @@ Performance comparisons must use equivalent snapshots, warm/cold cache labels, f
 - PostgreSQL metadata storage, high-availability connections, pooling, TLS policy, credential rotation, and migrations are future production hardening.
 - Dialect-specific reference curriculum queries using `julianday` remain SQLite examples; governed curated queries are portable.
 - Relationship-policy enforcement remains disabled.
-- No Spark, Airflow, Kubernetes, object storage, Parquet, Delta, or raw/bronze/silver/gold implementation was added.
+- Spark, Airflow, and PostgreSQL remain optional; Kubernetes, cloud object storage, Delta Lake, and other cluster infrastructure are not implemented.
 
-### How PostgreSQL prepares for the data lake and Spark
+### How PostgreSQL integrates with the data lake and Spark
 
-PostgreSQL gives a future gold layer a production-style serving destination. It does not become the raw lake and does not replace transformation lineage. The next abstraction will define raw, bronze, silver, and gold storage contracts around batches, manifests, parent snapshots, validation, and publication.
+PostgreSQL gives the implemented gold layer a production-style optional serving destination. It does not become the raw lake and does not replace transformation lineage. Raw, bronze, silver, and gold storage contracts define batches, manifests, parent snapshots, validation, and publication independently of the serving backend.
 
 ```mermaid
 flowchart LR
- RAW["Future raw immutable batch"] --> BR["Future bronze snapshot"]
- BR --> SI["Future silver validated snapshot"]
- SI --> GO["Future gold governed snapshot"]
+ RAW["Raw immutable batch"] --> BR["Bronze snapshot"]
+ BR --> SI["Silver validated snapshot"]
+ SI --> GO["Gold governed snapshot"]
  GO --> PG["PostgreSQL serving snapshot"]
  GO --> SQ["SQLite compatibility snapshot"]
  PG --> AN["Bounded analysis"]
  SQ --> AN
 ```
 
-Spark will later transform registered inputs into registered outputs using deterministic reviewed code. PostgreSQL proves the serving boundary now; it does not authorize arbitrary model-generated distributed code. Airflow and Kubernetes remain later concerns.
+Spark optionally transforms registered inputs into registered outputs using deterministic reviewed code. PostgreSQL implements the optional serving boundary; it does not authorize arbitrary model-generated distributed code. Airflow optionally orchestrates these existing contracts, while Kubernetes remains deferred.
 
 #### What this means in plain English
 
-PostgreSQL is the future store counter where polished products can be served. The next milestone designs the warehouse shelves and quality stages. Spark may later move and process boxes; it does not decide what is safe to sell.
+PostgreSQL is an optional store counter where polished products can be served. The lake layers are the warehouse shelves, Spark can move and process boxes using the established recipe, and Airflow coordinates the stations. None decides what is safe to sell.
 
 ## Project evolution: from bounded analyst to versioned data platform
 
@@ -1388,32 +1388,32 @@ Create quality-gate fixtures with `generate-source --malformed`. Create a relate
 
 Each command is one inspectable factory station. `run-pipeline` is a shortcut, not a hidden alternative process.
 
-## Why Spark is not included yet
+## Why Spark was added after the lake contracts
 
-Spark solves distributed computation; it should not decide what raw, bronze, silver, gold, validation, or publication mean. This milestone first freezes those contracts with small deterministic Python.
+Spark solves distributed computation; it does not decide what raw, bronze, silver, gold, validation, or publication mean. The project froze those contracts with deterministic Python before adding the optional PySpark implementation.
 
 ```mermaid
 flowchart LR
- CONTRACTS["Existing layer and validation contracts"] --> LOCAL["Current local Python implementation"]
- CONTRACTS --> SPARK["Future PySpark implementation"]
+ CONTRACTS["Existing layer and validation contracts"] --> LOCAL["Canonical local Python implementation"]
+ CONTRACTS --> SPARK["Optional PySpark implementation"]
  LOCAL --> PARITY["Same-input parity suite"]
  SPARK --> PARITY
  PARITY --> PUBLISH["Only validated equivalent outputs publish"]
 ```
 
-This release now implements that optional PySpark boundary while retaining local Python as the compatibility fixture. Airflow orchestration is the next milestone.
+The current release implements that optional PySpark boundary while retaining local Python as the canonical compatibility fixture. The optional Airflow DAG orchestrates either engine through the same contracts.
 
 ### What this means in plain English
 
-The project wrote and tested the recipe before buying industrial kitchen equipment. Spark can later cook larger batches without changing the recipe or inspection form.
+The project wrote and tested the recipe before adding industrial kitchen equipment. Spark can process larger batches without changing the recipe or inspection form.
 
-## Why Airflow is not included yet
+## Why Airflow was added after the execution contracts
 
-Airflow schedules known work; it should not define transformation rules. Once local and PySpark implementations satisfy the same contracts, Airflow can call them, retry operational failures, and record its run ID in the existing optional field.
+Airflow schedules known work; it does not define transformation rules. The optional DAG calls the established local Python or PySpark implementation, retries operational failures, and records its run ID in lineage metadata.
 
 ```mermaid
 flowchart TD
- AF["Future Airflow schedule"] --> R["Generate/register raw batch"]
+ AF["Airflow manual, scheduled, or backfill run"] --> R["Generate/register raw batch"]
  R --> B["Invoke reviewed bronze transform"]
  B --> S["Invoke reviewed silver transform"]
  S --> G["Invoke reviewed gold transform"]
@@ -1484,9 +1484,9 @@ Performance comparisons require equivalent snapshots, cache-state labels, server
 - Silver checks are intentionally focused on this fixture, not a generic enterprise quality framework.
 - Retention and garbage collection are manual.
 - PostgreSQL live results remain blocked until Docker or a DSN is available.
-- No Spark, Airflow, Kubernetes, cloud SDK, object-storage server, table format, or relationship-policy enforcement was added.
+- Spark and Airflow are optional local integrations. Kubernetes, cloud services, an external object-storage server, distributed table formats, and relationship-policy enforcement are not implemented.
 
-Production hardening should add an object-store adapter with conditional writes and encryption; Parquet after a dependency/format ADR; identity and access controls; PHI classification; tamper-evident metadata; retention; observability; live PostgreSQL roles/TLS/pooling; and disaster recovery. PySpark is next. Airflow follows stable Spark jobs. Kubernetes remains last.
+Production hardening should add an object-store adapter with conditional writes and encryption; identity and access controls; PHI classification; tamper-evident metadata; retention; observability; live PostgreSQL roles/TLS/pooling; distributed Spark hashing and cluster submission; Airflow operational deployment; and disaster recovery. Kubernetes remains last.
 
 ### What this means in plain English
 
@@ -1851,13 +1851,13 @@ Only named reviewed methods implement the three transitions. Spark receives type
 
 The AI may ask for an analysis later; it cannot walk onto the factory floor and reprogram the machinery.
 
-### Why Airflow is still deferred
+### How Airflow orchestrates Spark without owning its logic
 
-Airflow will schedule these established Python/Spark commands, retries, and publication dependencies after real Spark parity is available. It will populate `orchestration_run_id`; it will not embed alternate transformation policy.
+The optional Airflow DAG schedules the established Python/Spark transformations, retries, quality gates, and publication dependencies. It records the Airflow run ID in orchestration and lineage metadata; it does not embed alternate transformation policy. Real Spark execution still requires Java and PySpark, while runtime-independent tests verify Spark selection and task coordination.
 
 ```mermaid
 flowchart LR
- AF["Future Airflow DAG"] --> RAW["Register raw"]
+ AF["Optional Airflow DAG"] --> RAW["Register raw"]
  RAW --> BR["Run selected bronze engine"]
  BR --> SI["Run selected silver engine"]
  SI --> GO["Run selected gold engine"]
@@ -1879,7 +1879,7 @@ flowchart TD
  SD --> OBJ["External object storage"]
 ```
 
-No Airflow dependency, DAG, Kubernetes manifest, Spark operator, cloud SDK, Kafka, MinIO, Delta Lake, Iceberg, or Hudi component was added.
+The project includes an optional Airflow dependency group and a local-executor-compatible DAG. It does not include Kubernetes manifests, a Spark-on-Kubernetes operator, Celery workers, cloud SDKs, Kafka, MinIO, Delta Lake, Iceberg, or Hudi.
 
 ### Current limitations and production-hardening roadmap
 
@@ -1890,7 +1890,7 @@ No Airflow dependency, DAG, Kubernetes manifest, Spark operator, cloud SDK, Kafk
 - The large profile is optional and not a CI gate.
 - PostgreSQL live publication still requires a server.
 
-Production hardening should next add Airflow orchestration only after real Spark parity passes. Later work should add distributed logical hashing, object storage with conditional publication, external metadata, encryption and access policy, Spark event/metrics capture, cluster submission, resource testing, and operational recovery. Kubernetes remains after those boundaries exist.
+Production hardening should add a dedicated supported Airflow runtime, live Spark/PostgreSQL integration gates, distributed logical hashing, object storage with conditional publication, external metadata, encryption and access policy, Spark event/metrics capture, cluster submission, resource testing, and operational recovery. Kubernetes remains after those boundaries exist.
 
 ## Optional Apache Airflow orchestration
 
