@@ -27,5 +27,6 @@ data/airflow/
 *.log
 *.egg-info/
 .streamlit/secrets.toml
+kubernetes/secret.local.yaml
 .idea/
 .vscode/

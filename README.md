@@ -1449,7 +1449,7 @@ Kubernetes is the building manager. The project defined the rooms, machines, sch
 
 The final local run produced:
 
-- **166 passed, 17 skipped**: 13 require the unavailable live PostgreSQL DSN, 3 require a real Java/PySpark runtime, and 1 requires the optional Airflow package;
+- **170 passed, 17 skipped**: 13 require the unavailable live PostgreSQL DSN, 3 require a real Java/PySpark runtime, and 1 requires the optional Airflow package;
 - **92.92% coverage**, above the 92% gate;
 - successful compilation of `src` and `tests`;
 - valid original and PostgreSQL-overlay Compose configurations;
@@ -2130,7 +2130,7 @@ Do not point Airflow's metadata connection at the analytical clinical schema.
 
 ### Local setup and platform notes
 
-Apache Airflow is developed for POSIX environments. On Windows, use WSL2 or a Linux development environment. The repository does not add Docker-based Airflow because the local Docker daemon is unavailable and this milestone avoids adding operational infrastructure.
+Apache Airflow is developed for POSIX environments. On Windows, use WSL2, the provided Airflow container definition, or a Linux development environment. The current Windows verification host cannot run that image because its Docker daemon is unavailable.
 
 ```bash
 python -m venv .venv-airflow
@@ -2166,7 +2166,7 @@ The web UI and scheduler are operational tools; the healthcare analyst API does 
 
 ### Current Airflow verification results and limitations
 
-The optional Airflow package is not installed in the current Windows runtime, so a real scheduler, metadata migration, webserver, and DAG parse through Airflow itself are not claimed as executed. Runtime-independent tests validate the full runner, task ordering, retry configuration, callbacks, sensor behavior, Python engine, Spark selection, failed-gate preservation, publication, verification, metadata, and analysis lineage. A real DAG-import test is present and skips only when Airflow is absent. The complete available suite reports 166 passed, 17 skipped, and 92.92% coverage.
+The optional Airflow package is not installed in the current Windows runtime, so a real scheduler, metadata migration, webserver, and DAG parse through Airflow itself are not claimed as executed. Runtime-independent tests validate the full runner, task ordering, retry configuration, callbacks, sensor behavior, Python engine, Spark selection, failed-gate preservation, publication, verification, metadata, and analysis lineage. A real DAG-import test is present and skips only when Airflow is absent. The complete available suite reports 170 passed, 17 skipped, and 92.92% coverage.
 
 Docker remains unavailable, so live PostgreSQL publication is also not claimed. The DAG uses only local files and existing optional database configuration. Kubernetes manifests are provided, but no Celery, Helm, Terraform, broker, or cloud scheduler was introduced.
 
@@ -2362,7 +2362,7 @@ Compose remains the recommended quick local demonstration and is not deprecated.
 
 `scripts/validate_kubernetes.py` parses every YAML document and checks resource identity, namespace consistency, ClusterIP-only Services, generic PVCs, workload grace periods, Job restart behavior, explicit non-`latest` images, image pull policy, resource requests and limits, probes, referenced configuration, secret placeholders, and Kustomize membership. Tests run this validator in CI. `kubectl kustomize kubernetes` additionally verifies native rendering.
 
-In the current verification environment, Docker and Docker Compose clients are installed and Compose configuration renders successfully. `kubectl` 1.34.1 and Kustomize 5.7.1 render the resources. No Kubernetes API server is configured: client-side apply attempts `localhost:8080` and is refused. Neither kind nor minikube is installed. Therefore API, UI, PostgreSQL, Airflow, PVC binding, Ingress, and probe success are **not** claimed as live-deployed here.
+In the current verification environment, Docker and Docker Compose clients are installed and both Compose configurations render successfully. The Docker daemon is stopped, so image builds and container startup cannot be verified. `kubectl` 1.34.1 and Kustomize 5.7.1 render the resources. No Kubernetes API server is configured: client-side apply attempts `localhost:8080` and is refused. Neither kind nor minikube is installed. Therefore API, UI, PostgreSQL, Airflow, PVC binding, Ingress, and probe success are **not** claimed as live-deployed here.
 
 ### Current Kubernetes limitations
 
