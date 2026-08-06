@@ -111,6 +111,7 @@ The complete 3–5 minute recording package includes [the production guide](docs
 | Start here | Deep dive |
 |---|---|
 | [Platform overview](docs/overview.md) | [Architecture and diagrams](docs/architecture.md) |
+| [Complete platform manual](docs/platform_manual.md) | [Step-by-step component and operations reference](docs/platform_manual.md) |
 | [Local demo and screenshots](docs/demo.md) | [Agent safety](docs/agent_safety.md) |
 | [Verification status](docs/verification_status.md) | [Data model](docs/data_model.md) |
 | [Testing](docs/testing.md) | [Data lake](docs/data_lake.md) |
