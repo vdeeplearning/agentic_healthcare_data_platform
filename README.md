@@ -102,25 +102,20 @@ Reset only generated portfolio-demo data:
 
 This project connects disciplines that are often demonstrated separately. The bounded analyst shows AI systems engineering and safety controls. The normalized schema, read-only execution, and SQL validation show relational design. The medallion lake, snapshots, manifests, and Python/Spark parity show data engineering. Airflow demonstrates workflow coordination without absorbing business logic. Kubernetes manifests demonstrate deployment operations without changing application contracts. Audit, lineage, testing, and CI make every claim reviewable rather than relying on a polished happy-path screen.
 
-## Demo video
-
-The complete 3–5 minute recording package includes [the production guide](docs/video_demo.md), [storyboard](docs/video_storyboard.md), [exact narration](docs/video_script.md), and [capture checklist](docs/video_capture_checklist.md). A short README preview plan is included in [the demo guide](docs/demo.md#short-gif-or-mp4-preview).
-
 ## Documentation
 
 | Start here | Deep dive |
 |---|---|
-| [Platform overview](docs/overview.md) | [Architecture and diagrams](docs/architecture.md) |
-| [Complete platform manual](docs/platform_manual.md) | [Step-by-step component and operations reference](docs/platform_manual.md) |
-| [Local demo and screenshots](docs/demo.md) | [Agent safety](docs/agent_safety.md) |
+| [Platform overview](docs/overview.md) | [Complete platform manual](docs/platform_manual.md) |
+| [Local demo and screenshots](docs/demo.md) | [Architecture and diagrams](docs/architecture.md) |
 | [Verification status](docs/verification_status.md) | [Data model](docs/data_model.md) |
-| [Testing](docs/testing.md) | [Data lake](docs/data_lake.md) |
-| [Troubleshooting](docs/troubleshooting.md) | [Spark](docs/spark.md) |
-| [Release notes](docs/release_notes_v1.md) | [Airflow](docs/airflow.md) |
-| [Resume bullets](docs/resume_bullets.md) | [Kubernetes](docs/kubernetes.md) |
-| [Interview talking points](docs/interview_talking_points.md) | [PostgreSQL](docs/postgres.md) |
-| [Video package](docs/video_demo.md) | [Audit and lineage](docs/lineage.md) |
-| [ADRs](docs/adr/) | [Operations](docs/operations.md) |
+| [Testing](docs/testing.md) | [Agent safety](docs/agent_safety.md) |
+| [Troubleshooting](docs/troubleshooting.md) | [Data lake](docs/data_lake.md) |
+| [Release notes](docs/release_notes_v1.md) | [Spark](docs/spark.md) |
+| [Resume bullets](docs/resume_bullets.md) | [Airflow](docs/airflow.md) |
+| [Interview talking points](docs/interview_talking_points.md) | [Kubernetes](docs/kubernetes.md) |
+| [ADRs](docs/adr/) | [PostgreSQL](docs/postgres.md) |
+| [Operations](docs/operations.md) | [Audit and lineage](docs/lineage.md) |
 
 ## Current limitations
 
